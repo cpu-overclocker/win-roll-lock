@@ -2,10 +2,10 @@
 
 # 🔐 WinRollLock
 
-**Mot de passe Windows local qui change chaque jour.**
-*Sans serveur, sans AD, sans matériel.*
+**A Windows local password that rotates every day.**
+*No server, no AD, no hardware.*
 
-<sub>Par défaut `ddMM` — ex. `0410` le 4 octobre</sub>
+<sub>Default `ddMM` — e.g. `0410` on October 4th</sub>
 
 ![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1-5391FE?logo=powershell&logoColor=white)
@@ -15,80 +15,80 @@
 
 ---
 
-## ✨ En bref
+## ✨ At a glance
 
 | | |
 |---|---|
-| 🔄 | Rotation **quotidienne** du mot de passe d'un compte local |
-| 🌐 | Heure réseau multi-source : **NTP → HTTP `Date`** |
-| 🛡️ | **3 niveaux de repli** — jamais de date BIOS douteuse |
-| 🔑 | **MasterCode** de secours si horloge corrompue |
-| 🔐 | État chiffré **DPAPI machine** |
-| 🧩 | Tâche planifiée **SYSTEM** avec mutex |
+| 🔄 | **Daily** rotation of a local account's password |
+| 🌐 | Multi-source time: **NTP → HTTP `Date`** |
+| 🛡️ | **3-level fallback** — never trusts a doubtful BIOS clock |
+| 🔑 | **MasterCode** recovery when the clock is corrupted |
+| 🔐 | State encrypted with **machine DPAPI** |
+| 🧩 | **SYSTEM** scheduled task with mutex |
 
 ---
 
-## 🧠 Fonctionnement
+## 🧠 How it works
 
-À chaque déclenchement, l'heure est résolue par ordre de confiance :
+On every trigger, the time is resolved by order of trust:
 
-    ┌─ 1. Réseau ──────► NTP (pool, Cloudflare, Microsoft)
-    │                     puis HTTP Date de 1.1.1.1
-    │                     ✅ mode SYNC  → Prefix + date
+    ┌─ 1. Network ─────► NTP (pool, Cloudflare, Microsoft)
+    │                     then HTTP Date from 1.1.1.1
+    │                     ✅ SYNC mode  → Prefix + date
     │
-    ├─ 2. Cohérence ───► Comparaison avec last_known_time.txt
-    │                     Retard > 5 min = horloge corrompue
+    ├─ 2. Consistency ─► Compared with last_known_time.txt
+    │                     Lag > 5 min = corrupted clock
     │
-    ├─ 3. Secours ─────► Corrompue + hors ligne
-    │                     🚨 mode FALLBACK → MasterCode
+    ├─ 3. Fallback ────► Corrupted + offline
+    │                     🚨 FALLBACK mode → MasterCode
     │
-    └─ 4. Bannière ────► Message pré-connexion (jamais le mot de passe)
+    └─ 4. Banner ──────► Pre-logon message (never the password)
 
-> `last_known_time.txt` n'est **jamais** mis à jour en mode `FALLBACK`.
+> `last_known_time.txt` is **never** updated in `FALLBACK` mode.
 
 ---
 
-## 📂 Arborescence
+## 📂 Tree
 
     windows-pin-roll-lock/
     ├── scripts/
-    │   ├── Install.ps1            → installateur
-    │   └── Uninstall.ps1          → désinstallateur
+    │   ├── Install.ps1            → installer
+    │   └── Uninstall.ps1          → uninstaller
     ├── src/
-    │   ├── Common.ps1             → log · DPAPI · bannière
-    │   ├── Security-Policy.ps1    → politique via secedit
-    │   ├── Time-Sync.ps1          → NTP · HTTP Date · décision
-    │   └── Update-RollingPass.ps1 → cœur (exécuté par la tâche)
+    │   ├── Common.ps1             → log · DPAPI · banner
+    │   ├── Security-Policy.ps1    → policy via secedit
+    │   ├── Time-Sync.ps1          → NTP · HTTP Date · decision
+    │   └── Update-RollingPass.ps1 → core (run by the task)
     ├── tests/
     │   └── Test-TimeFallback.ps1
     ├── config.example.json
     └── README.md
 
-À l'installation, `src/` est copié dans `C:\ProgramData\WinRollLock\src\`.
+On install, `src/` is copied into `C:\ProgramData\WinRollLock\src\`.
 
 ---
 
-## ⚙️ Prérequis
+## ⚙️ Requirements
 
 - Windows 10 / 11 · Server 2019+
-- PowerShell 5.1 (intégré)
-- Droits **administrateur**
-- Un compte **local** (pas Microsoft)
-- Un **second admin local** actif, mot de passe fixe
-- BitLocker : clé de récupération sauvegardée
+- PowerShell 5.1 (built-in)
+- **Administrator** rights
+- A **local** account (no Microsoft account)
+- An active **second local admin** with a fixed password
+- BitLocker: recovery key saved beforehand
 
 ---
 
 ## 🚀 Installation
 
-    # PowerShell administrateur, depuis la racine du dépôt
+    # Administrator PowerShell, from the repo root
     .\scripts\Install.ps1 -MasterCode "9999"
 
 <details>
-<summary><b>Options disponibles</b></summary>
+<summary><b>Available options</b></summary>
 
     .\scripts\Install.ps1 `
-        -User       "MonCompte" `
+        -User       "MyAccount" `
         -Format     "ddMM"      `
         -Prefix     "Pin"       `
         -MasterCode "9999"
@@ -96,30 +96,30 @@
 </details>
 
 <details>
-<summary><b>Les 9 étapes de l'installeur</b></summary>
+<summary><b>The installer's 9 steps</b></summary>
 
-1. Vérifie que le compte cible est **local**
-2. Vérifie un **admin de secours** actif
-3. Vérifie **BitLocker** (confirmation manuelle)
-4. Valide le **mot de passe actuel**
-5. Copie `src/` · écrit `config.json` · pose les **ACL**
-6. **Essai à blanc** (aucune modification)
-7. Sauvegarde puis applique la **politique tournante**
-8. Enregistre l'état initial et la **tâche planifiée**
-9. Première exécution + affichage du log
+1. Verifies the target account is **local**
+2. Verifies an active **recovery admin**
+3. Verifies **BitLocker** (manual confirmation)
+4. Validates the **current password**
+5. Copies `src/` · writes `config.json` · sets **ACLs**
+6. **Dry run** (nothing is modified)
+7. Backs up then applies the **rolling policy**
+8. Registers the initial state and the **scheduled task**
+9. First run + log tail
 
 </details>
 
-> ⚠️ **Testez `Win + L`** immédiatement après l'installation, **avant** tout redémarrage.
+> ⚠️ **Test `Win + L`** immediately after install, **before** any reboot.
 
 ---
 
 ## 🔧 Configuration
 
-Généré par l'installeur dans `C:\ProgramData\WinRollLock\config.json`.
+Generated by the installer at `C:\ProgramData\WinRollLock\config.json`.
 
     {
-      "User": "TonCompteLocal",
+      "User": "MyLocalAccount",
       "Format": "ddMM",
       "Prefix": "",
       "MasterCode": "9999",
@@ -128,55 +128,55 @@ Généré par l'installeur dans `C:\ProgramData\WinRollLock\config.json`.
       "Banner": true
     }
 
-| Champ | Rôle |
+| Field | Purpose |
 |---|---|
-| `User` | Compte local cible |
-| `Format` | Format .NET (`ddMM`, `MMdd`, `ddMMyy`…) |
-| `Prefix` | Préfixe (`Pin` → `Pin0410`) |
-| `MasterCode` | Mot de passe de secours (`FALLBACK`) |
-| `MinYear` | Année minimum acceptée |
-| `NtpServers` | Serveurs NTP dans l'ordre |
-| `Banner` | Bannière en mode dégradé |
+| `User` | Target local account |
+| `Format` | .NET format (`ddMM`, `MMdd`, `ddMMyy`…) |
+| `Prefix` | Prefix (`Pin` → `Pin0410`) |
+| `MasterCode` | Recovery password (`FALLBACK`) |
+| `MinYear` | Minimum accepted year |
+| `NtpServers` | NTP servers, in order |
+| `Banner` | Banner in degraded mode |
 
-> Ne committez **jamais** un `config.json` réel.
+> **Never** commit a real `config.json`.
 
 ---
 
-## ⏰ Déclencheurs
+## ⏰ Triggers
 
-| Événement | Détail |
+| Event | Detail |
 |---|---|
-| 🚀 Démarrage | — |
-| 🕛 Quotidien | 00:00:01 |
-| 😴 Sortie de veille | `Power-Troubleshooter` 1 · `Kernel-Power` 107 |
-| 📶 Connexion réseau | `NetworkProfile` 10000 |
+| 🚀 Boot | — |
+| 🕛 Daily | 00:00:01 |
+| 😴 Wake | `Power-Troubleshooter` 1 · `Kernel-Power` 107 |
+| 📶 Network up | `NetworkProfile` 10000 |
 
-Un mutex global `WinRollLock` empêche les exécutions concurrentes.
+A global `WinRollLock` mutex prevents concurrent runs.
 
 ---
 
-## 🗂️ Fichiers runtime
+## 🗂️ Runtime files
 
-`C:\ProgramData\WinRollLock\` — ACL : **SYSTEM** + **Administrateurs**
+`C:\ProgramData\WinRollLock\` — ACL: **SYSTEM** + **Administrators**
 
-| Fichier | Rôle |
+| File | Purpose |
 |---|---|
 | `config.json` | Configuration |
-| `state.dat` | État chiffré DPAPI machine |
-| `last_known_time.txt` | Dernier instant UTC validé |
-| `log.txt` | Journal (rotation 512 Ko) |
-| `policy_original.json` | Politique d'origine |
-| `src\` | Scripts exécutés |
+| `state.dat` | State encrypted with machine DPAPI |
+| `last_known_time.txt` | Last validated UTC instant |
+| `log.txt` | Log (512 KB rotation) |
+| `policy_original.json` | Original policy backup |
+| `src\` | Executed scripts |
 
 ---
 
-## 🗑️ Désinstallation
+## 🗑️ Uninstall
 
     .\scripts\Uninstall.ps1
-    # ou, pour conserver les fichiers :
+    # or, to keep the files:
     .\scripts\Uninstall.ps1 -KeepFiles
 
-Supprime la tâche · applique un mot de passe fixe (préserve les clés DPAPI) · restaure la politique · retire la bannière · nettoie le dossier.
+Removes the task · applies a fixed password (preserves DPAPI keys) · restores the policy · clears the banner · cleans the folder.
 
 ---
 
@@ -184,38 +184,38 @@ Supprime la tâche · applique un mot de passe fixe (préserve les clés DPAPI) 
 
     .\tests\Test-TimeFallback.ps1
 
-Fonctions pures uniquement — aucun accès système requis.
-Couvre : pile CMOS morte · reset 2021 · extinction longue · dérive · absence d'historique · format · préfixe.
+Pure functions only — no system access required.
+Covers: dead CMOS battery · 2021 reset · long shutdown · drift · no history · format · prefix.
 
 ---
 
-## 🔒 Sécurité
+## 🔒 Security
 
-- 🛡️ ACL restrictives (`SYSTEM` + Admins uniquement)
-- 🔐 `state.dat` chiffré **DPAPI machine** → préserve les clés utilisateur (navigateurs, EFS…)
-- 🚫 `last_known_time.txt` jamais écrit en mode `FALLBACK`
-- 🔏 TLS ignoré **uniquement** pour lire l'en-tête HTTP `Date`
+- 🛡️ Restrictive ACLs (`SYSTEM` + Admins only)
+- 🔐 `state.dat` encrypted with **machine DPAPI** → preserves user DPAPI keys (browsers, EFS…)
+- 🚫 `last_known_time.txt` never written in `FALLBACK` mode
+- 🔏 TLS ignored **only** to read the HTTP `Date` header
 
 ---
 
-## ⚠️ Limites
+## ⚠️ Limitations
 
-- Compte **local uniquement** (pas de Microsoft / Azure AD)
-- **Windows Hello** reste indépendant → choisir « Mot de passe » à la connexion
-- Horloge BIOS **en avance** sans réseau : non détectable
-- Ne protège pas d'un administrateur local malveillant
-- Mono-utilisateur
+- **Local account only** (no Microsoft / Azure AD)
+- **Windows Hello** is independent → choose "Password" at the logon screen
+- BIOS clock running **ahead** without network: undetectable
+- Doesn't protect against a malicious local admin
+- Single-user only
 
 ---
 
 <div align="center">
 
-### ❗ Avertissement
+### ❗ Warning
 
-Ce projet **modifie le mot de passe de connexion Windows**.
+This project **changes the Windows logon password**.
 
-Perte du `MasterCode` **et** du compte de secours = session potentiellement **inaccessible**.
+Losing both the `MasterCode` **and** the recovery account = potentially **locked out**.
 
-🧪 Tester en VM · 💾 Sauver la clé BitLocker · 🔍 Vérifier avec `Win+L` · 📝 Noter le MasterCode hors ligne
+🧪 Test in a VM · 💾 Save the BitLocker key · 🔍 Verify with `Win+L` · 📝 Keep the MasterCode offline
 
 </div>
