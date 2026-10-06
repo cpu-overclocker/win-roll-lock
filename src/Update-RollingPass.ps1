@@ -59,12 +59,11 @@ try {
     $banner = $null
     if ([bool]$cfg.Banner) {
         switch ($d.Mode) {
-            'FALLBACK'   { $banner = 'CMOS Error : mode secours actif.' }
-            'OFFLINE_OK' { $banner = 'Hors ligne : date non verifiee par le reseau.' }
+            'FALLBACK'   { $banner = 'CMOS error: fallback mode active.' }
+            'OFFLINE_OK' { $banner = 'Offline: date not verified by the network.' }
             default      { $banner = $null }
         }
     }
-
     if ($DryRun) {
         [pscustomobject]@{ Mode = $d.Mode; Reason = $d.Reason; Source = $(if ($net) { $net.Source } else { 'aucune' }); PasswordCible = $target; Banniere = $banner }
         return

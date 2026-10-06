@@ -85,12 +85,23 @@ function Get-DefaultDateFormat {
     try {
         $culture = [System.Globalization.CultureInfo]::CurrentCulture
         $pattern = $culture.DateTimeFormat.ShortDatePattern
-        $dPos = $pattern.IndexOf('d')
-        $mPos = $pattern.IndexOf('M')
-        if ($dPos -ge 0 -and $mPos -ge 0 -and $dPos -lt $mPos) {
-            return 'ddMM'
+
+        # Split on the FIRST date separator to isolate the leading field.
+        # This works for dd/MM, MM/dd, dd.MM, yyyy/MM/dd, etc.
+        $firstSep = $pattern.IndexOfAny([char[]]'/.-')
+        $leading  = if ($firstSep -gt 0) { $pattern.Substring(0, $firstSep) } else { $pattern }
+
+        # If the leading field starts with a year, move past it (yyyy/MM/dd).
+        if ($leading -match '^y+$') {
+            $rest = $pattern.Substring($firstSep + 1)
+            $nextSep = $rest.IndexOfAny([char[]]'/.-')
+            $leading = if ($nextSep -gt 0) { $rest.Substring(0, $nextSep) } else { $rest }
         }
-        return 'MMdd'
+
+        # Now $leading is either day-first (d...) or month-first (M...).
+        if ($leading -match '^d') { return 'ddMM' }
+        if ($leading -match '^M') { return 'MMdd' }
+        return 'ddMM'
     } catch {
         return 'ddMM'
     }
@@ -100,6 +111,37 @@ if ([string]::IsNullOrEmpty($Format)) {
     $Format = Get-DefaultDateFormat
     $culture = [System.Globalization.CultureInfo]::CurrentCulture
     Write-Host "Detected culture: $($culture.Name)  ->  default format: $Format" -ForegroundColor DarkGray
+}
+
+# --- Windows Hello detection (real check, no false positives) ---
+function Test-WindowsHelloEnabled {
+    try {
+        $output = & dsregcmd /status 2>$null
+        foreach ($line in $output) {
+            if ($line -match '^\s*NgcSet\s*:\s*(\w+)') {
+                return ($matches[1] -eq 'YES')
+            }
+        }
+        return $false
+    } catch {
+        return $false
+    }
+}
+if (Test-WindowsHelloEnabled) {
+    Write-Host ''
+    Write-Host '============================================================' -ForegroundColor Yellow
+    Write-Host '  WINDOWS HELLO DETECTED' -ForegroundColor Yellow
+    Write-Host '============================================================' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  Windows Hello (PIN, fingerprint, face) is enabled on' -ForegroundColor White
+    Write-Host '  this machine. WinRollLock only changes the TRADITIONAL' -ForegroundColor White
+    Write-Host '  account password, NOT the Hello PIN.' -ForegroundColor White
+    Write-Host ''
+    Write-Host '  At the logon screen, choose the PASSWORD option' -ForegroundColor Gray
+    Write-Host '  (not the PIN) to use the rolling password.' -ForegroundColor Gray
+    Write-Host ''
+    $helloAck = Read-Host 'Continue anyway? (Y/N)'
+    if ($helloAck -notmatch '^(y|yes|o|oui)$') { throw 'Installation cancelled.' }
 }
 
 if ([string]::IsNullOrEmpty($MasterCode)) {
@@ -354,8 +396,16 @@ try {
     # 3. BitLocker
     # ------------------------------------------------------------
     Write-Host '3/9 Verifying BitLocker' -ForegroundColor Cyan
-    $bl = (& manage-bde -status $env:SystemDrive 2>$null) -join "`n"
-    if ($bl -match 'Protection On|Protection activ') {
+    $blActive = $false
+    try {
+        $vol = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop
+        if ($vol.ProtectionStatus -eq 'On') { $blActive = $true }
+    } catch {
+        # Cmdlet not available (Home edition) or other error — assume off
+        $blActive = $false
+    }
+
+    if ($blActive) {
         Write-Host 'BitLocker is active. The recovery key must be saved BEFORE continuing.' -ForegroundColor Yellow
         $ans = Read-Host 'Recovery key saved? (Y/N)'
         if ($ans -notmatch '^(y|yes|o|oui)$') { throw 'Installation cancelled.' }
