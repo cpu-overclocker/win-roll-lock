@@ -17,6 +17,7 @@
 
 ## ✨ At a glance
 
+| | |
 |---|---|
 | 🔄 | **Daily** rotation of a local account's password |
 | 🌐 | Multi-source time: **NTP → HTTP `Date`** |
