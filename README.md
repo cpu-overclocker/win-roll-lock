@@ -27,9 +27,14 @@ Your Windows password **changes every day**, automatically. No server, no AD, no
 | 🔑 | MasterCode as an emergency fallback |
 | 🔐 | Encrypted state (machine DPAPI) |
 
-**Example** — on October 4th:
-- Format `ddMM` (most countries) → password `0410`
-- Format `MMdd` (US) → password `1004`
+**The format is auto-detected from your country.** It's always **day + month** or **month + day**, in that order, using two digits each:
+
+| Your region | Format used | Example on October 4th |
+|---|---|---|
+| Most countries (FR, UK, DE, …) | `ddMM` (day + month) | `0410` |
+| United States | `MMdd` (month + day) | `1004` |
+
+No configuration needed — the script picks the right one for you on install.
 
 ---
 
@@ -80,8 +85,8 @@ A **fixed fallback password** used **only** when the system clock is broken **an
 
 | Situation | Password used |
 |---|---|
-| Normal day | `Prefix + date` (e.g. `0410`) |
-| Clock corrupted + offline | **MasterCode** (e.g. `1234`) |
+| Normal day | Day + month, or month + day (auto-detected from your country) — ex: `0410` |
+| Clock corrupted + offline | **MasterCode** — ex: `1234` |
 
 The MasterCode is **never** valid when the clock is fine. It's a safety net, not a backdoor.
 
