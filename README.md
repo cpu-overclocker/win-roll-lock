@@ -63,15 +63,15 @@ On every trigger, the time is resolved by order of trust:
 
 ### File roles
 
-| Path | Required at runtime | Purpose |
+| Path | Purpose |
 |---|:---:|---|
-| `scripts/Install.ps1` | ✅ | One-shot install |
-| `scripts/Uninstall.ps1` | ✅ | Clean uninstall |
-| `src/Common.ps1` | ✅ | Log · DPAPI state · password · banner |
-| `src/Security-Policy.ps1` | ✅ | `secedit` password policy |
-| `src/Time-Sync.ps1` | ✅ | NTP / HTTP Date + decision |
-| `src/Update-RollingPass.ps1` | ✅ | Core, run by the scheduled task |
-| `README.md` | ❌ | Documentation |
+| `scripts/Install.ps1` | One-shot install |
+| `scripts/Uninstall.ps1` | Clean uninstall |
+| `src/Common.ps1` | Log · DPAPI state · password · banner |
+| `src/Security-Policy.ps1` | `secedit` password policy |
+| `src/Time-Sync.ps1` | NTP / HTTP Date + decision |
+| `src/Update-RollingPass.ps1` | Core, run by the scheduled task |
+| `README.md` | Documentation |
 
 On install, `src/` is copied into `C:\ProgramData\WinRollLock\src\` — that copy is what actually runs.
 
