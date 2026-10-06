@@ -18,7 +18,6 @@
 ## ✨ At a glance
 
 | | |
-|---|---|
 | 🔄 | **Daily** rotation of a local account's password |
 | 🌐 | Multi-source time: **NTP → HTTP `Date`** |
 | 🛡️ | **3-level fallback** — never trusts a doubtful BIOS clock |
