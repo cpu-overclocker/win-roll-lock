@@ -209,9 +209,12 @@ try {
 
         # --- Menu loop ---
         while ($true) {
-            # Get all active local accounts
+            # Get all active local accounts, excluding builtin system accounts
+            $builtin = @('Administrateur','Administrator','DefaultAccount','Invité','Guest','WDAGUtilityAccount')
             $allLocal = @(Get-LocalUser | Where-Object {
-                $_.Enabled -and $_.PrincipalSource -eq 'Local'
+                $_.Enabled -and
+                $_.PrincipalSource -eq 'Local' -and
+                $_.Name -notin $builtin
             })
 
             # Does the current session user match a local account?
@@ -230,8 +233,7 @@ try {
             for ($i = 0; $i -lt $localUsers.Count; $i++) {
                 $name = $localUsers[$i].Name
                 $tags = @()
-                if ($name -in @('Administrateur','Administrator')) { $tags += 'builtin' }
-                if ($name -eq $currentUser)                        { $tags += 'active' }
+                if ($name -eq $currentUser) { $tags += 'active' }
                 $tagStr = if ($tags.Count) { '  [' + ($tags -join ', ') + ']' } else { '' }
                 Write-Host ("  [{0}] {1}{2}" -f ($i + 1), $name, $tagStr)
             }
@@ -334,64 +336,139 @@ try {
     }
 
     # ------------------------------------------------------------
-    # 2. Recovery administrator
+    # 2. Recovery administrator (interactive menu)
     # ------------------------------------------------------------
-    Write-Host '2/9 Verifying recovery administrator' -ForegroundColor Cyan
+    Write-Host '2/9 Selecting recovery administrator' -ForegroundColor Cyan
+
+    $builtin = @('Administrateur','Administrator','DefaultAccount','Invité','Guest','WDAGUtilityAccount')
     $rescue = $null
-    $members = Get-LocalGroupMember -SID 'S-1-5-32-544'
-    foreach ($m in $members) {
-        $name = ($m.Name -split '\\')[-1]
-        $u = Get-LocalUser -Name $name -ErrorAction SilentlyContinue
-        if ($u -and $u.Enabled -and $u.Name -ne $User) {
-            $rescue = $u
-            break
+
+    while ($true) {
+        # Find active local admins (excluding the target account and builtins)
+        $adminCandidates = @()
+        foreach ($m in (Get-LocalGroupMember -SID 'S-1-5-32-544')) {
+            $n = ($m.Name -split '\\')[-1]
+            $u = Get-LocalUser -Name $n -ErrorAction SilentlyContinue
+            if ($u -and $u.Enabled -and $u.PrincipalSource -eq 'Local' -and
+                $u.Name -ne $User -and $u.Name -notin $builtin) {
+                $adminCandidates += $u
+            }
         }
-    }
+        $adminCandidates = @($adminCandidates | Sort-Object Name -Unique)
 
-    if (-not $rescue) {
-        Write-Host "No other active local administrator. One is required, with a FIXED password." -ForegroundColor Yellow
-        $rn = Read-Host 'Name of the recovery account to create or repair (empty to cancel)'
-        if (-not $rn) { throw 'Installation cancelled: no recovery account.' }
+        Write-Host ''
+        Write-Host 'Recovery administrator is used if the rolling account gets locked.' -ForegroundColor White
+        Write-Host 'It must have a FIXED password you remember.' -ForegroundColor White
+        Write-Host ''
+        Write-Host 'Available recovery accounts:' -ForegroundColor White
+        Write-Host ''
+        Write-Host '  [0] Create a new recovery account' -ForegroundColor Green
+        for ($i = 0; $i -lt $adminCandidates.Count; $i++) {
+            Write-Host ("  [{0}] {1}" -f ($i + 1), $adminCandidates[$i].Name)
+        }
+        Write-Host ''
 
-        $existing = Get-LocalUser -Name $rn -ErrorAction SilentlyContinue
+        if ($adminCandidates.Count -eq 0) {
+            Write-Host 'No eligible recovery admin found. Choose [0] to create one.' -ForegroundColor Yellow
+            Write-Host ''
+        }
 
-        if ($existing) {
-            Write-Host "   Account '$rn' already exists. Repairing..." -ForegroundColor Yellow
+        do {
+            $choice = Read-Host 'Select account number (0 to cancel)'
+            $idx = -1
+            $valid = [int]::TryParse($choice, [ref]$idx) -and $idx -ge 0 -and $idx -le $adminCandidates.Count
+            if (-not $valid) { Write-Host 'Invalid choice. Try again.' -ForegroundColor Red }
+        } while (-not $valid)
 
-            if (-not $existing.Enabled) {
-                Enable-LocalUser -Name $rn
-                Write-Host '     - account enabled' -ForegroundColor Green
-            }
+        # --- Create a new recovery account ---
+        if ($idx -eq 0) {
+            Write-Host ''
+            Write-Host 'Create a new recovery account' -ForegroundColor Cyan
+            Write-Host ''
 
-            $rp = Read-Host "FIXED password for '$rn'" -AsSecureString
-            Set-LocalUser -Name $rn -Password $rp -PasswordNeverExpires $true
-            Write-Host '     - password set' -ForegroundColor Green
+            do {
+                $rn = (Read-Host 'Recovery account name').Trim()
+                if ([string]::IsNullOrEmpty($rn)) {
+                    Write-Host 'Name cannot be empty.' -ForegroundColor Red
+                    continue
+                }
+                if ($rn -match '[\\/:*?"<>|]') {
+                    Write-Host 'Name contains invalid characters.' -ForegroundColor Red
+                    continue
+                }
+                $exists = Get-LocalUser -Name $rn -ErrorAction SilentlyContinue
+                if ($exists) {
+                    Write-Host "Account '$rn' already exists. Pick another name." -ForegroundColor Red
+                    continue
+                }
+                break
+            } while ($true)
 
-            $inAdmin = $false
-            foreach ($m in (Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue)) {
-                if ($m.Name -match "\\$([regex]::Escape($rn))$") { $inAdmin = $true; break }
-            }
-            if (-not $inAdmin) {
+            do {
+                $rp1 = Read-Host "FIXED password for '$rn'" -AsSecureString
+                $rp2 = Read-Host 'Confirm password' -AsSecureString
+                $plain1 = ConvertTo-Plain $rp1
+                $plain2 = ConvertTo-Plain $rp2
+                if ($plain1 -ne $plain2) {
+                    Write-Host 'Passwords do not match. Try again.' -ForegroundColor Red
+                    continue
+                }
+                if ([string]::IsNullOrEmpty($plain1)) {
+                    Write-Host 'Password cannot be empty for a recovery account.' -ForegroundColor Red
+                    continue
+                }
+                break
+            } while ($true)
+
+            try {
+                New-LocalUser -Name $rn -Password $rp1 -PasswordNeverExpires `
+                               -Description 'WinRollLock recovery' | Out-Null
                 Add-LocalGroupMember -SID 'S-1-5-32-544' -Member $rn
-                Write-Host '     - added to Administrators' -ForegroundColor Green
-            } else {
-                Write-Host '     - already in Administrators' -ForegroundColor Green
+                Add-CreatedAccount -Name $rn
+                $rescue = Get-LocalUser -Name $rn
+                Write-Host "   Account '$rn' created and added to Administrators." -ForegroundColor Green
+                break
+            } catch {
+                Write-Host "Failed to create account: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host 'Back to recovery account selection.' -ForegroundColor Yellow
+                continue
             }
+        }
 
+        # --- Existing account selected ---
+        $rn = $adminCandidates[$idx - 1].Name
+        Write-Host ''
+        Write-Host "Confirm FIXED password for '$rn' (used as recovery)." -ForegroundColor Cyan
+        do {
+            $rp1 = Read-Host 'Password' -AsSecureString
+            $rp2 = Read-Host 'Confirm password' -AsSecureString
+            $plain1 = ConvertTo-Plain $rp1
+            $plain2 = ConvertTo-Plain $rp2
+            if ($plain1 -ne $plain2) {
+                Write-Host 'Passwords do not match. Try again.' -ForegroundColor Red
+                continue
+            }
+            if ([string]::IsNullOrEmpty($plain1)) {
+                Write-Host 'Password cannot be empty for a recovery account.' -ForegroundColor Red
+                continue
+            }
+            break
+        } while ($true)
+
+        try {
+            Set-LocalUser -Name $rn -Password $rp1 -PasswordNeverExpires $true
             $rescue = Get-LocalUser -Name $rn
-        } else {
-            Write-Host "   Creating account '$rn'..." -ForegroundColor Cyan
-            $rp = Read-Host "FIXED password for '$rn'" -AsSecureString
-            New-LocalUser -Name $rn -Password $rp -PasswordNeverExpires -Description 'WinRollLock recovery' | Out-Null
-            Add-LocalGroupMember -SID 'S-1-5-32-544' -Member $rn
-            Add-CreatedAccount -Name $rn
-            $rescue = Get-LocalUser -Name $rn
-            Write-Host '     - account created and added to Administrators' -ForegroundColor Green
+            Write-Host "   Password set for '$rn'." -ForegroundColor Green
+            break
+        } catch {
+            Write-Host "Failed to set password: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host 'Back to recovery account selection.' -ForegroundColor Yellow
+            continue
         }
     }
 
     Write-Host "   Recovery account: $($rescue.Name)"
-
+    
     # ------------------------------------------------------------
     # 3. BitLocker
     # ------------------------------------------------------------

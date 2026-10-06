@@ -203,19 +203,29 @@ try {
         Write-Host "Rolling account '$($cfg.User)' was deleted. Skipping password reset." -ForegroundColor Gray
     } else {
         Write-Host ''
-        Write-Host "Account '$($cfg.User)' still exists. Set a FIXED password to replace the rolling one." -ForegroundColor Cyan
-        $setPwd = Read-Host 'Change its password? (Y/N)'
-        if ($setPwd -match '^(y|yes|o|oui)$') {
-            $state = Read-State
-            $p1 = ConvertTo-Plain (Read-Host "New FIXED password for $($cfg.User) (empty for none)" -AsSecureString)
+        Write-Host "Account '$($cfg.User)' still exists." -ForegroundColor Cyan
+        Write-Host "Set a FIXED password to replace the rolling one." -ForegroundColor Cyan
+        Write-Host "(Leave empty to remove the password entirely.)" -ForegroundColor Gray
+        Write-Host ''
+
+        do {
+            $p1 = ConvertTo-Plain (Read-Host "New FIXED password for $($cfg.User)" -AsSecureString)
             $p2 = ConvertTo-Plain (Read-Host 'Confirm password' -AsSecureString)
-            if ($p1 -ne $p2) { throw 'The two passwords differ.' }
-            $old = $null
-            if ($state) { $old = [string]$state.Password }
-            $how = Set-AccountPassword -User $cfg.User -New $p1 -Old $old
-            Write-Host "Fixed password applied (method $how)."
+            if ($p1 -ne $p2) {
+                Write-Host 'Passwords do not match. Try again.' -ForegroundColor Red
+                continue
+            }
+            break
+        } while ($true)
+
+        $state = Read-State
+        $old = $null
+        if ($state) { $old = [string]$state.Password }
+        $how = Set-AccountPassword -User $cfg.User -New $p1 -Old $old
+        if ($p1 -eq '') {
+            Write-Host "Password removed (method $how)." -ForegroundColor Green
         } else {
-            Write-Host "Password unchanged. The current rolling password remains active." -ForegroundColor Yellow
+            Write-Host "Fixed password applied (method $how)." -ForegroundColor Green
         }
     }
 
