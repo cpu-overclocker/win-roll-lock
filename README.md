@@ -64,7 +64,7 @@ On every trigger, the time is resolved by order of trust:
 ### File roles
 
 | Path | Purpose |
-|---|:---:|---|
+|------|---------|
 | `scripts/Install.ps1` | One-shot install |
 | `scripts/Uninstall.ps1` | Clean uninstall |
 | `src/Common.ps1` | Log · DPAPI state · password · banner |
