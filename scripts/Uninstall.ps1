@@ -1,5 +1,5 @@
-# Uninstall.ps1 : retire WinRollLock et restaure un mot de passe fixe
-# S'auto-élève en administrateur AVANT toute autre chose.
+# Uninstall.ps1 : removes WinRollLock and restores a fixed password
+# Self-elevates to administrator BEFORE anything else.
 [CmdletBinding()]
 param(
     [string]$Root = 'C:\ProgramData\WinRollLock',
@@ -8,7 +8,7 @@ param(
 )
 
 # ============================================================
-# 1. AUTO-ELEVATION — première chose exécutée
+# 1. AUTO-ELEVATION — first thing executed
 # ============================================================
 $current = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 $isAdmin = $current.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -63,7 +63,7 @@ if (-not $isAdmin) {
 }
 
 # ============================================================
-# 2. ADMIN — à partir d'ici on est élevé
+# 2. ADMIN — from here we are elevated
 # ============================================================
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
@@ -87,55 +87,154 @@ function Wait-BeforeExit {
 }
 
 try {
-    # 1. Stopper la tache d'abord pour eviter toute course
-    Unregister-ScheduledTask -TaskName 'WinRollLock' -Confirm:$false -ErrorAction SilentlyContinue
-    Write-Host 'Tache planifiee supprimee.'
-
-    # 2. Mot de passe fixe (ChangePassword avec l'etat connu, donc DPAPI preserve si possible)
+    # ------------------------------------------------------------
+    # 0. Pre-flight check
+    # ------------------------------------------------------------
     $cfgPath = Get-WRLPath 'config.json'
     if (-not (Test-Path $cfgPath)) {
-        Write-Host "Config introuvable ($cfgPath). Rien a desinstaller." -ForegroundColor Yellow
+        Write-Host "Config not found ($cfgPath). Nothing to uninstall." -ForegroundColor Yellow
         Wait-BeforeExit 0
     }
-    $cfg   = Get-Content $cfgPath -Raw | ConvertFrom-Json
-    $state = Read-State
-    $p1 = ConvertTo-Plain (Read-Host "Nouveau mot de passe FIXE pour $($cfg.User) (vide pour aucun)" -AsSecureString)
-    $p2 = ConvertTo-Plain (Read-Host 'Confirme le mot de passe' -AsSecureString)
-    if ($p1 -ne $p2) { throw 'Les deux mots de passe different. Tache deja supprimee, relance le script.' }
-    $old = $null
-    if ($state) { $old = [string]$state.Password }
-    $how = Set-AccountPassword -User $cfg.User -New $p1 -Old $old
-    Write-Host "Mot de passe fixe applique (methode $how)."
+    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
 
-    # 3. Strategie de securite d'origine
+    # ------------------------------------------------------------
+    # 1. Global confirmation
+    # ------------------------------------------------------------
+    Write-Host ''
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host '  UNINSTALL WinRollLock' -ForegroundColor Cyan
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '  This will :' -ForegroundColor White
+    Write-Host '    - remove the scheduled task' -ForegroundColor Gray
+    Write-Host '    - restore the original security policy' -ForegroundColor Gray
+    Write-Host '    - clear the logon banner' -ForegroundColor Gray
+    Write-Host "    - handle the rolling account ($($cfg.User))" -ForegroundColor Gray
+    Write-Host ''
+    $confirm = Read-Host 'Proceed with uninstall? (Y/N)'
+    if ($confirm -notmatch '^(y|yes|o|oui)$') {
+        Write-Host 'Uninstall cancelled.' -ForegroundColor Yellow
+        Wait-BeforeExit 0
+    }
+
+    # ------------------------------------------------------------
+    # 2. Stop the task
+    # ------------------------------------------------------------
+    Unregister-ScheduledTask -TaskName 'WinRollLock' -Confirm:$false -ErrorAction SilentlyContinue
+    Write-Host 'Scheduled task removed.'
+
+    # ------------------------------------------------------------
+    # 3. Original security policy
+    # ------------------------------------------------------------
     $polPath = Get-WRLPath 'policy_original.json'
     if (Test-Path $polPath) {
         $o = Get-Content $polPath -Raw | ConvertFrom-Json
         $h = @{}
         $o.PSObject.Properties | ForEach-Object { $h[$_.Name] = [int]$_.Value }
         Set-SecPolicyValues $h
-        Write-Host 'Strategie de securite restauree.'
+        Write-Host 'Security policy restored.'
     } else {
         Set-SecPolicyValues @{ MaximumPasswordAge = 42 }
-        Write-Host 'Sauvegarde absente : expiration remise a 42 jours.'
+        Write-Host 'No backup found: expiration reset to 42 days.'
     }
 
-    # 4. Banniere
+    # ------------------------------------------------------------
+    # 4. Banner
+    # ------------------------------------------------------------
     Set-LogonBanner -Text $null
 
-    # 5. Fichiers
-    if (-not $KeepFiles) {
-        Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "Dossier $Root supprime."
+    # ------------------------------------------------------------
+    # 5. Created accounts cleanup
+    # ------------------------------------------------------------
+    $createdPath = Join-Path $Root 'created_accounts.json'
+    $deletedAccounts = @()
+    $targetWasDeleted = $false
+
+    if (Test-Path $createdPath) {
+        try {
+            $created = @(Get-Content $createdPath -Raw | ConvertFrom-Json)
+        } catch {
+            $created = @()
+        }
+
+        # Keep only accounts that still exist
+        $created = @($created | Where-Object {
+            $_ -and (Get-LocalUser -Name $_ -ErrorAction SilentlyContinue)
+        })
+
+        if ($created.Count -gt 0) {
+            Write-Host ''
+            Write-Host 'Accounts created by WinRollLock:' -ForegroundColor Cyan
+            foreach ($name in $created) {
+                $marker = if ($name -eq $cfg.User) { ' (rolling account)' } else { '' }
+                Write-Host "  - $name$marker"
+            }
+            Write-Host ''
+
+            $ans = Read-Host 'Delete these accounts? (Y/N)'
+            if ($ans -match '^(y|yes|o|oui)$') {
+                foreach ($name in $created) {
+                    try {
+                        # Cannot delete the account we're currently running as
+                        if ($name -eq $env:USERNAME) {
+                            Write-Host "  Skipping '$name' (current session)." -ForegroundColor Yellow
+                            continue
+                        }
+                        Remove-LocalUser -Name $name
+                        Write-Host "  Account '$name' deleted." -ForegroundColor Green
+                        $deletedAccounts += $name
+                        if ($name -eq $cfg.User) { $targetWasDeleted = $true }
+                    } catch {
+                        Write-Host "  Failed to delete '$name': $($_.Exception.Message)" -ForegroundColor Red
+                    }
+                }
+            } else {
+                Write-Host '  Accounts kept.' -ForegroundColor Yellow
+            }
+        }
     }
 
-    Write-Host 'Desinstallation terminee.' -ForegroundColor Green
+    # ------------------------------------------------------------
+    # 6. Fixed password (only if the target account still exists)
+    # ------------------------------------------------------------
+    $targetStillExists = Get-LocalUser -Name $cfg.User -ErrorAction SilentlyContinue
+    if ($targetWasDeleted -or -not $targetStillExists) {
+        Write-Host ''
+        Write-Host "Rolling account '$($cfg.User)' was deleted. Skipping password reset." -ForegroundColor Gray
+    } else {
+        Write-Host ''
+        Write-Host "Account '$($cfg.User)' still exists. Set a FIXED password to replace the rolling one." -ForegroundColor Cyan
+        $setPwd = Read-Host 'Change its password? (Y/N)'
+        if ($setPwd -match '^(y|yes|o|oui)$') {
+            $state = Read-State
+            $p1 = ConvertTo-Plain (Read-Host "New FIXED password for $($cfg.User) (empty for none)" -AsSecureString)
+            $p2 = ConvertTo-Plain (Read-Host 'Confirm password' -AsSecureString)
+            if ($p1 -ne $p2) { throw 'The two passwords differ.' }
+            $old = $null
+            if ($state) { $old = [string]$state.Password }
+            $how = Set-AccountPassword -User $cfg.User -New $p1 -Old $old
+            Write-Host "Fixed password applied (method $how)."
+        } else {
+            Write-Host "Password unchanged. The current rolling password remains active." -ForegroundColor Yellow
+        }
+    }
+
+    # ------------------------------------------------------------
+    # 7. Files
+    # ------------------------------------------------------------
+    if (-not $KeepFiles) {
+        Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Folder $Root removed."
+    }
+
+    Write-Host ''
+    Write-Host 'Uninstall complete.' -ForegroundColor Green
     Wait-BeforeExit 0
 }
 catch {
     Write-Host ''
     Write-Host '============================================================' -ForegroundColor Red
-    Write-Host "ERREUR : $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host '============================================================' -ForegroundColor Red
     Write-Host $_.ScriptStackTrace -ForegroundColor DarkRed
     Wait-BeforeExit 1
