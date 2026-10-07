@@ -51,8 +51,18 @@ function Read-State {
     }
 }
 
+# Verifie qu'un couple utilisateur/mot de passe local est valide.
+# NB : le warning PSScriptAnalyzer PSAvoidUsingPlainTextForPassword est volontairement
+# supprime ici. PrincipalContext.ValidateCredentials() n'accepte qu'une string, pas une
+# SecureString : impossible de faire autrement pour valider un mot de passe local.
+# Le plaintext vit le temps de l'appel, il n'est ni logge ni persiste.
 function Test-LocalCredential {
-    param([string]$User, [string]$Password)
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '',
+        Justification = 'PrincipalContext.ValidateCredentials requires a plain string')]
+    param(
+        [Parameter(Mandatory)][string]$User,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Password
+    )
     try {
         Add-Type -AssemblyName System.DirectoryServices.AccountManagement
         $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $env:COMPUTERNAME)
