@@ -620,51 +620,77 @@ try {
     Write-Host ''
     Write-Host '4/9 Current account password' -ForegroundColor Cyan
     Write-Host ''
-    Write-Host "  Verifying the CURRENT password of '$User'." -ForegroundColor White
-    Write-Host ''
-    Write-Host '  Leave empty if the account has no password.' -ForegroundColor DarkGray
-    Write-Host ''
 
-    $cur       = ''
-    $failCount = 0
-    while ($true) {
-        Write-Host '  Forgot password? press F to reset' -ForegroundColor DarkGray
-        $inp = ConvertTo-Plain (Read-Host "  Enter the current '$User' password" -AsSecureString)
-
-        if ($inp -eq '') {
-            Write-Host '   No password registered.' -ForegroundColor DarkGray
-            $cur = ''
-            break
-        }
-
-        if ($inp -match '^[Ff]$') {
-            Write-Host '   OK - admin reset will be used on first run.' -ForegroundColor Yellow
-            $cur = ''
-            break
-        }
-
-        $ok = Invoke-WithSpinner -Message 'Checking password' -Arguments @($User, $inp, $env:COMPUTERNAME) -ScriptBlock {
-            param($u, $p, $c)
+    # On detecte d'abord si le compte a un mot de passe, pour eviter de demander
+    # quelque chose d'inutile (et eviter le message trompeur "Leave empty...").
+    $targetHasPwd = [bool](Invoke-WithSpinner -Message 'Checking password' -Arguments @($User, $env:COMPUTERNAME) -ScriptBlock {
+        param($name, $computer)
+        try {
+            Add-Type -AssemblyName System.DirectoryServices.AccountManagement -ErrorAction SilentlyContinue
+            $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $computer)
             try {
-                Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-                $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $c)
-                return [bool]$ctx.ValidateCredentials($u, $p, [System.DirectoryServices.AccountManagement.ContextOptions]::Negotiate)
-            } catch { return $false }
+                $emptyOk = [bool]$ctx.ValidateCredentials($name, '', [System.DirectoryServices.AccountManagement.ContextOptions]::Negotiate)
+                return (-not $emptyOk)
+            } catch {
+                $lu = Get-LocalUser -Name $name -ErrorAction SilentlyContinue
+                return [bool]($lu -and $lu.PasswordRequired)
+            }
+        } catch {
+            return $false
         }
+    })
 
-        if ($ok) {
-            Write-Host '   Current password verified.' -ForegroundColor Green
-            $cur = $inp
-            break
-        }
+    $cur = ''
 
-        $failCount++
-        if ($failCount -ge 3) {
-            Write-Host '   Too many failed attempts - admin reset will be used.' -ForegroundColor Yellow
-            $cur = ''
-            break
+    if (-not $targetHasPwd) {
+        Write-Host "  Account '$User' currently has NO password." -ForegroundColor Yellow
+        Write-Host '  The rolling password will be set on first run.' -ForegroundColor Gray
+        Write-Host ''
+        $cur = ''
+    } else {
+        Write-Host "  Verifying the CURRENT password of '$User'." -ForegroundColor White
+        Write-Host ''
+        Write-Host '  Forgot password? press F to reset' -ForegroundColor DarkGray
+        Write-Host ''
+
+        $failCount = 0
+        while ($true) {
+            $inp = ConvertTo-Plain (Read-Host "  Enter the current '$User' password" -AsSecureString)
+
+            if ($inp -match '^[Ff]$') {
+                Write-Host '   OK - admin reset will be used on first run.' -ForegroundColor Yellow
+                $cur = ''
+                break
+            }
+
+            if ([string]::IsNullOrEmpty($inp)) {
+                Write-Host '   Empty password. Type F to force reset, or retry.' -ForegroundColor Red
+                continue
+            }
+
+            $ok = Invoke-WithSpinner -Message 'Checking password' -Arguments @($User, $inp, $env:COMPUTERNAME) -ScriptBlock {
+                param($u, $p, $c)
+                try {
+                    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+                    $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $c)
+                    return [bool]$ctx.ValidateCredentials($u, $p, [System.DirectoryServices.AccountManagement.ContextOptions]::Negotiate)
+                } catch { return $false }
+            }
+
+            if ($ok) {
+                Write-Host '   Current password verified.' -ForegroundColor Green
+                $cur = $inp
+                break
+            }
+
+            $failCount++
+            if ($failCount -ge 3) {
+                Write-Host '   Too many failed attempts - admin reset will be used.' -ForegroundColor Yellow
+                $cur = ''
+                break
+            }
+            Write-Host "   Invalid password ($failCount/3)." -ForegroundColor Red
         }
-        Write-Host "   Invalid password ($failCount/3)." -ForegroundColor Red
     }
 
     # ------------------------------------------------------------
