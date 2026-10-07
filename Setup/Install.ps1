@@ -177,6 +177,43 @@ function ConvertTo-Plain([SecureString]$s) {
     try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }
 }
 
+# Execute un scriptblock dans un runspace dedie, avec un spinner sur UNE seule
+# ligne qui tourne JUSQU'A ce que le job finisse (ou timeout). Retourne le
+# dernier objet emis par le scriptblock.
+function Invoke-WithSpinner {
+    param(
+        [Parameter(Mandatory)][scriptblock]$ScriptBlock,
+        [object[]]$Arguments = @(),
+        [string]$Message = 'Working',
+        [int]$TimeoutMs = 30000
+    )
+
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript($ScriptBlock.ToString())
+    foreach ($a in $Arguments) { [void]$ps.AddArgument($a) }
+    $handle = $ps.BeginInvoke()
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $i  = 0
+    while (-not $handle.IsCompleted -and $sw.ElapsedMilliseconds -lt $TimeoutMs) {
+        $dots = '.' * (($i % 3) + 1)
+        $pad  = ' ' * (3 - ($i % 3))
+        Write-Host -NoNewline "`r  $Message$dots$pad"
+        Start-Sleep -Milliseconds 100
+        $i++
+    }
+
+    $result = $null
+    if ($handle.IsCompleted) {
+        $result = $ps.EndInvoke($handle) | Select-Object -Last 1
+    } else {
+        try { $ps.Stop() } catch { }
+    }
+    $ps.Dispose()
+    Write-Host "`r  $Message... done."
+    return $result
+}
+
 function Wait-BeforeExit {
     param([int]$Code)
     if (-not $NoPause) {
@@ -338,7 +375,6 @@ try {
     Write-Host ''
     Write-Host '2/9 Selecting recovery administrator' -ForegroundColor Cyan
 
-    $builtin = @('Administrateur','Administrator','DefaultAccount','Invité','Guest','WDAGUtilityAccount')
     $rescue = $null
 
     while ($true) {
@@ -347,7 +383,7 @@ try {
             $n = ($m.Name -split '\\')[-1]
             $u = Get-LocalUser -Name $n -ErrorAction SilentlyContinue
             if ($u -and $u.Enabled -and $u.PrincipalSource -eq 'Local' -and
-                $u.Name -ne $User -and $u.Name -notin $builtin) {
+                $u.Name -ne $User) {
                 $adminCandidates += $u
             }
         }
@@ -431,9 +467,25 @@ try {
             }
         }
 
-        $rn     = $adminCandidates[$idx - 1].Name
-        $luRec  = Get-LocalUser -Name $rn -ErrorAction SilentlyContinue
-        $hasPwd = $luRec -and $luRec.PasswordRequired
+        $rn = $adminCandidates[$idx - 1].Name
+
+        # Spinner : tourne jusqu'a ce que Test-AccountHasPassword retourne
+        $hasPwd = [bool](Invoke-WithSpinner -Message 'Checking password' -Arguments @($rn, $env:COMPUTERNAME) -ScriptBlock {
+            param($name, $computer)
+            try {
+                Add-Type -AssemblyName System.DirectoryServices.AccountManagement -ErrorAction SilentlyContinue
+                $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $computer)
+                try {
+                    $emptyOk = [bool]$ctx.ValidateCredentials($name, '', [System.DirectoryServices.AccountManagement.ContextOptions]::Negotiate)
+                    return (-not $emptyOk)
+                } catch {
+                    $lu = Get-LocalUser -Name $name -ErrorAction SilentlyContinue
+                    return [bool]($lu -and $lu.PasswordRequired)
+                }
+            } catch {
+                return $false
+            }
+        })
 
         Write-Host ''
         Write-Host "Recovery account: '$rn'" -ForegroundColor Cyan
@@ -445,13 +497,59 @@ try {
         }
 
         $recoveryDone = $false
+        $failCount    = 0
+
         while (-not $recoveryDone) {
-            Write-Host 'Choose how to set its password:' -ForegroundColor White
-            Write-Host ''
-            if ($hasPwd) {
-                Write-Host '  [1] Enter the CURRENT password (verify it)' -ForegroundColor Green
+
+            # --- Cas 1 : le compte a un mot de passe et il reste des essais ---
+            if ($hasPwd -and $failCount -lt 3) {
+                Write-Host '  Forgot password? press F to set a new one' -ForegroundColor DarkGray
+                $sec   = Read-Host "  Enter the current '$rn' password" -AsSecureString
+                $plain = ConvertTo-Plain $sec
+
+                if ($plain -match '^[Ff]$') {
+                    Write-Host '   OK - switching to "set a new password".' -ForegroundColor Yellow
+                    $failCount = 3
+                    continue
+                }
+
+                if ([string]::IsNullOrEmpty($plain)) {
+                    Write-Host '   Empty password.' -ForegroundColor Red
+                    continue
+                }
+
+                $ok = Invoke-WithSpinner -Message 'Checking password' -Arguments @($rn, $plain, $env:COMPUTERNAME) -ScriptBlock {
+                    param($u, $p, $c)
+                    try {
+                        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+                        $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $c)
+                        return [bool]$ctx.ValidateCredentials($u, $p, [System.DirectoryServices.AccountManagement.ContextOptions]::Negotiate)
+                    } catch { return $false }
+                }
+
+                if ($ok) {
+                    try {
+                        Set-LocalUser -Name $rn -PasswordNeverExpires $true
+                        $rescue = Get-LocalUser -Name $rn
+                        Write-Host "   Current password verified for '$rn' (expiration disabled)." -ForegroundColor Green
+                        $recoveryDone = $true
+                    } catch {
+                        Write-Host "   Failed: $($_.Exception.Message)" -ForegroundColor Red
+                    }
+                } else {
+                    $failCount++
+                    if ($failCount -ge 3) {
+                        Write-Host '   Too many failed attempts.' -ForegroundColor Red
+                    } else {
+                        Write-Host "   Invalid password ($failCount/3)." -ForegroundColor Red
+                    }
+                }
+                continue
             }
-            Write-Host '  [2] Set a NEW password' -ForegroundColor Green
+
+            # --- Cas 2 : menu reduit (compte sans mdp, F, ou 3 echecs) ---
+            Write-Host ''
+            Write-Host '  [1] Set a NEW password' -ForegroundColor Green
             Write-Host '  [0] Back to account selection' -ForegroundColor Gray
             Write-Host ''
 
@@ -462,32 +560,7 @@ try {
                 break
             }
 
-            if ($sub -eq '1' -and $hasPwd) {
-                $verified = $false
-                for ($try = 1; $try -le 3; $try++) {
-                    $sec   = Read-Host "Current password for '$rn' (attempt $try/3)" -AsSecureString
-                    $plain = ConvertTo-Plain $sec
-                    if ([string]::IsNullOrEmpty($plain)) { continue }
-                    if (Test-LocalCredential -User $rn -Password $plain) {
-                        $verified = $true
-                        break
-                    }
-                    Write-Host '   Invalid password.' -ForegroundColor Red
-                }
-                if (-not $verified) {
-                    Write-Host '   Too many failed attempts. Back to menu.' -ForegroundColor Red
-                    continue
-                }
-                try {
-                    Set-LocalUser -Name $rn -PasswordNeverExpires $true
-                    $rescue = Get-LocalUser -Name $rn
-                    Write-Host "   Current password verified for '$rn' (expiration disabled)." -ForegroundColor Green
-                    $recoveryDone = $true
-                } catch {
-                    Write-Host "   Failed: $($_.Exception.Message)" -ForegroundColor Red
-                }
-            }
-            elseif ($sub -eq '2') {
+            if ($sub -eq '1') {
                 do {
                     $sec1 = Read-Host "NEW FIXED password for '$rn'" -AsSecureString
                     $sec2 = Read-Host 'Confirm password' -AsSecureString
@@ -511,8 +584,7 @@ try {
                 } catch {
                     Write-Host "   Failed: $($_.Exception.Message)" -ForegroundColor Red
                 }
-            }
-            else {
+            } else {
                 Write-Host '   Invalid choice.' -ForegroundColor Red
             }
         }
@@ -543,12 +615,57 @@ try {
     }
 
     # ------------------------------------------------------------
-    # 4. Current password
+    # 4. Current password (target account)
     # ------------------------------------------------------------
     Write-Host ''
     Write-Host '4/9 Current account password' -ForegroundColor Cyan
-    $cur = ConvertTo-Plain (Read-Host "Current password for $User (empty if none)" -AsSecureString)
-    if ($cur -ne '' -and -not (Test-LocalCredential -User $User -Password $cur)) { throw 'Current password is incorrect.' }
+    Write-Host ''
+    Write-Host "  Verifying the CURRENT password of '$User'." -ForegroundColor White
+    Write-Host ''
+    Write-Host '  Leave empty if the account has no password.' -ForegroundColor DarkGray
+    Write-Host ''
+
+    $cur       = ''
+    $failCount = 0
+    while ($true) {
+        Write-Host '  Forgot password? press F to reset' -ForegroundColor DarkGray
+        $inp = ConvertTo-Plain (Read-Host "  Enter the current '$User' password" -AsSecureString)
+
+        if ($inp -eq '') {
+            Write-Host '   No password registered.' -ForegroundColor DarkGray
+            $cur = ''
+            break
+        }
+
+        if ($inp -match '^[Ff]$') {
+            Write-Host '   OK - admin reset will be used on first run.' -ForegroundColor Yellow
+            $cur = ''
+            break
+        }
+
+        $ok = Invoke-WithSpinner -Message 'Checking password' -Arguments @($User, $inp, $env:COMPUTERNAME) -ScriptBlock {
+            param($u, $p, $c)
+            try {
+                Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+                $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $c)
+                return [bool]$ctx.ValidateCredentials($u, $p, [System.DirectoryServices.AccountManagement.ContextOptions]::Negotiate)
+            } catch { return $false }
+        }
+
+        if ($ok) {
+            Write-Host '   Current password verified.' -ForegroundColor Green
+            $cur = $inp
+            break
+        }
+
+        $failCount++
+        if ($failCount -ge 3) {
+            Write-Host '   Too many failed attempts - admin reset will be used.' -ForegroundColor Yellow
+            $cur = ''
+            break
+        }
+        Write-Host "   Invalid password ($failCount/3)." -ForegroundColor Red
+    }
 
     # ------------------------------------------------------------
     # 5. Copy files (config.json is written in step 6 once format is chosen)
@@ -712,7 +829,7 @@ try {
     $q2raw = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Kernel-Power''] and EventID=107]]</Select></Query></QueryList>'
     $q3raw = '<QueryList><Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"><Select Path="Microsoft-Windows-NetworkProfile/Operational">*[System[EventID=10000]]</Select></Query></QueryList>'
     $q4raw = '<QueryList><Query Id="0" Path="Microsoft-Windows-WLAN-AutoConfig/Operational"><Select Path="Microsoft-Windows-WLAN-AutoConfig/Operational">*[System[EventID=8001]]</Select></Query></QueryList>'
-
+    
     $q1 = [System.Security.SecurityElement]::Escape($q1raw)
     $q2 = [System.Security.SecurityElement]::Escape($q2raw)
     $q3 = [System.Security.SecurityElement]::Escape($q3raw)

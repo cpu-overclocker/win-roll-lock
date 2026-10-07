@@ -101,11 +101,11 @@ try {
     }
     if ($DryRun) {
         [pscustomobject]@{
-            Mode          = $d.Mode
-            Reason        = $d.Reason
-            Source        = $(if ($net) { $net.Source } elseif ($skipNetwork) { 'cache' } else { 'aucune' })
-            PasswordCible = $target
-            Banniere      = $banner
+            Mode            = $d.Mode
+            Reason          = $d.Reason
+            Source          = $(if ($net) { $net.Source } elseif ($skipNetwork) { 'cache' } else { 'aucune' })
+            TargetPassword  = $target
+            Banniere        = $banner
         }
         return
     }

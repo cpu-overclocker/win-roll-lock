@@ -72,6 +72,31 @@ function Test-LocalCredential {
     }
 }
 
+# Determine si un compte local a REELLEMENT un mot de passe.
+# PasswordRequired seul est trompeur : il vaut $false sur un compte qui a un mot
+# de passe mais dont la saisie n'est pas obligatoire a l'ouverture de session.
+# Methode : tenter une auth avec mot de passe vide.
+#   - reussit         => pas de mot de passe
+#   - echoue (False)  => mot de passe present
+#   - exception       => pas de mot de passe (comportement Windows avec Negotiate)
+function Test-AccountHasPassword {
+    param([Parameter(Mandatory)][string]$Name)
+    try {
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+        $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $env:COMPUTERNAME)
+        try {
+            $emptyOk = [bool]$ctx.ValidateCredentials($Name, '', [System.DirectoryServices.AccountManagement.ContextOptions]::Negotiate)
+            return (-not $emptyOk)
+        } catch {
+            # Auth vide refusee par exception : compte sans mot de passe.
+            $lu = Get-LocalUser -Name $Name -ErrorAction SilentlyContinue
+            return [bool]($lu -and $lu.PasswordRequired)
+        }
+    } catch {
+        return $false
+    }
+}
+
 # Retourne 'CHANGE' (avec ancien mot de passe, DPAPI preserve) ou 'RESET' (reinitialisation admin).
 function Set-AccountPassword {
     param(
@@ -79,7 +104,9 @@ function Set-AccountPassword {
         [Parameter(Mandatory)][AllowEmptyString()][string]$New,
         [AllowNull()][string]$Old
     )
-    if ($null -ne $Old) {
+    # Ancien mot de passe vide = compte sans mot de passe : ChangePassword est
+    # impossible (Windows refuse une chaine vide), on va directement en RESET.
+    if ($null -ne $Old -and $Old -ne '') {
         try {
             $u = [ADSI]"WinNT://$env:COMPUTERNAME/$User,user"
             $u.ChangePassword($Old, $New)
