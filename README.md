@@ -39,25 +39,6 @@ No configuration needed — the script picks the right one for you on install.
 
 ---
 
-## 📁 Repository layout
-
-```
-win-roll-lock/
-├── README.md
-├── Setup/
-│   ├── Install.ps1        ← double-click this to install
-│   └── Uninstall.ps1      ← double-click this to uninstall
-└── src/
-    ├── Common.ps1
-    ├── Security-Policy.ps1
-    ├── Time-Sync.ps1
-    └── Update-RollingPass.ps1   ← runs from the scheduled task
-```
-
-The `Setup\` scripts auto-locate the `src\` folder, so you can also move them next to `src\` if you prefer a flat layout.
-
----
-
 ## 🚀 Install
 
 > **Just double-click `Setup\Install.ps1`** — nothing else to do.
