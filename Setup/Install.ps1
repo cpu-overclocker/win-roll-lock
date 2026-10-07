@@ -215,11 +215,9 @@ try {
         Write-Host '1/9 Selecting target account' -ForegroundColor Cyan
 
         while ($true) {
-            $builtin = @('Administrateur','Administrator','DefaultAccount','Invité','Guest','WDAGUtilityAccount')
             $allLocal = @(Get-LocalUser | Where-Object {
                 $_.Enabled -and
-                $_.PrincipalSource -eq 'Local' -and
-                $_.Name -notin $builtin
+                $_.PrincipalSource -eq 'Local'
             })
 
             $activeLocal = $allLocal | Where-Object { $_.Name -eq $currentUser } | Select-Object -First 1
