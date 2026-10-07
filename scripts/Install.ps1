@@ -86,19 +86,15 @@ function Get-DefaultDateFormat {
         $culture = [System.Globalization.CultureInfo]::CurrentCulture
         $pattern = $culture.DateTimeFormat.ShortDatePattern
 
-        # Split on the FIRST date separator to isolate the leading field.
-        # This works for dd/MM, MM/dd, dd.MM, yyyy/MM/dd, etc.
         $firstSep = $pattern.IndexOfAny([char[]]'/.-')
         $leading  = if ($firstSep -gt 0) { $pattern.Substring(0, $firstSep) } else { $pattern }
 
-        # If the leading field starts with a year, move past it (yyyy/MM/dd).
         if ($leading -match '^y+$') {
             $rest = $pattern.Substring($firstSep + 1)
             $nextSep = $rest.IndexOfAny([char[]]'/.-')
             $leading = if ($nextSep -gt 0) { $rest.Substring(0, $nextSep) } else { $rest }
         }
 
-        # Now $leading is either day-first (d...) or month-first (M...).
         if ($leading -match '^d') { return 'ddMM' }
         if ($leading -match '^M') { return 'MMdd' }
         return 'ddMM'
@@ -217,8 +213,6 @@ function Wait-BeforeExit {
     exit $Code
 }
 
-# Records an account created by this installer, so Uninstall can propose
-# to remove it later. Stored in $Root\created_accounts.json.
 function Add-CreatedAccount {
     param([Parameter(Mandatory)][string]$Name)
     if (-not (Test-Path $Root)) {
@@ -245,9 +239,7 @@ try {
     if (-not $isExplicitUser) {
         Write-Host '1/9 Selecting target account' -ForegroundColor Cyan
 
-        # --- Menu loop ---
         while ($true) {
-            # Get all active local accounts, excluding builtin system accounts
             $builtin = @('Administrateur','Administrator','DefaultAccount','Invité','Guest','WDAGUtilityAccount')
             $allLocal = @(Get-LocalUser | Where-Object {
                 $_.Enabled -and
@@ -255,11 +247,9 @@ try {
                 $_.Name -notin $builtin
             })
 
-            # Does the current session user match a local account?
             $activeLocal = $allLocal | Where-Object { $_.Name -eq $currentUser } | Select-Object -First 1
             $others      = @($allLocal | Where-Object { $_.Name -ne $currentUser } | Sort-Object Name)
 
-            # Build ordered list: active session first (if local), then the rest
             $localUsers = @()
             if ($activeLocal) { $localUsers += $activeLocal }
             $localUsers += $others
@@ -290,13 +280,11 @@ try {
                 if (-not $valid) { Write-Host 'Invalid choice. Try again.' -ForegroundColor Red }
             } while (-not $valid)
 
-            # --- Create a new account ---
             if ($idx -eq 0) {
                 Write-Host ''
                 Write-Host 'Create a new local account' -ForegroundColor Cyan
                 Write-Host ''
 
-                # Ask for a name, loop until valid and unused
                 do {
                     $newName = (Read-Host 'New account name').Trim()
                     if ([string]::IsNullOrEmpty($newName)) {
@@ -315,7 +303,6 @@ try {
                     break
                 } while ($true)
 
-                # Password (2x)
                 do {
                     $pwd1 = Read-Host "Password for '$newName'" -AsSecureString
                     $pwd2 = Read-Host "Confirm password" -AsSecureString
@@ -328,7 +315,6 @@ try {
                     break
                 } while ($true)
 
-                # Should the new account be added to Administrators?
                 $addAdminAns = Read-Host "Add '$newName' to Administrators? (Y/N)"
                 $addAdmin = $addAdminAns -match '^(y|yes|o|oui)$'
 
@@ -345,7 +331,7 @@ try {
 
                     $User = $newName
                     Write-Host "   Selected account: $User" -ForegroundColor Green
-                    break   # exit the menu loop
+                    break
                 } catch {
                     Write-Host "Failed to create account: $($_.Exception.Message)" -ForegroundColor Red
                     Write-Host 'Back to account selection.' -ForegroundColor Yellow
@@ -353,7 +339,6 @@ try {
                 }
             }
 
-            # --- Existing account selected ---
             $User = $localUsers[$idx - 1].Name
             Write-Host "   Selected account: $User" -ForegroundColor Green
             break
@@ -374,7 +359,7 @@ try {
     }
 
     # ------------------------------------------------------------
-    # 2. Recovery administrator (interactive menu)
+    # 2. Recovery administrator
     # ------------------------------------------------------------
     Write-Host '2/9 Selecting recovery administrator' -ForegroundColor Cyan
 
@@ -382,7 +367,6 @@ try {
     $rescue = $null
 
     while ($true) {
-        # Find active local admins (excluding the target account and builtins)
         $adminCandidates = @()
         foreach ($m in (Get-LocalGroupMember -SID 'S-1-5-32-544')) {
             $n = ($m.Name -split '\\')[-1]
@@ -418,7 +402,6 @@ try {
             if (-not $valid) { Write-Host 'Invalid choice. Try again.' -ForegroundColor Red }
         } while (-not $valid)
 
-        # --- Create a new recovery account ---
         if ($idx -eq 0) {
             Write-Host ''
             Write-Host 'Create a new recovery account' -ForegroundColor Cyan
@@ -473,7 +456,6 @@ try {
             }
         }
 
-        # --- Existing account selected ---
         $rn = $adminCandidates[$idx - 1].Name
         Write-Host ''
         Write-Host "Confirm FIXED password for '$rn' (used as recovery)." -ForegroundColor Cyan
@@ -506,7 +488,7 @@ try {
     }
 
     Write-Host "   Recovery account: $($rescue.Name)"
-    
+
     # ------------------------------------------------------------
     # 3. BitLocker
     # ------------------------------------------------------------
@@ -516,7 +498,6 @@ try {
         $vol = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop
         if ($vol.ProtectionStatus -eq 'On') { $blActive = $true }
     } catch {
-        # Cmdlet not available (Home edition) or other error — assume off
         $blActive = $false
     }
 
@@ -559,7 +540,6 @@ try {
         Write-Host ''
         Write-Host 'Installation cancelled.' -ForegroundColor Yellow
 
-        # Delete accounts created during this install
         $createdPath = Join-Path $Root 'created_accounts.json'
         if (Test-Path $createdPath) {
             try { $created = @(Get-Content $createdPath -Raw | ConvertFrom-Json) } catch { $created = @() }
@@ -578,7 +558,6 @@ try {
             }
         }
 
-        # Delete the install folder (config.json, src, state, etc.)
         if (Test-Path $Root) {
             Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
             Write-Host "  Folder $Root removed." -ForegroundColor Green
@@ -604,24 +583,53 @@ try {
     $ps  = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $scr = Join-Path $Root 'src\Update-RollingPass.ps1'
 
+    # >>> MODIF : ajout de la requête WLAN-AutoConfig/8001 (connexion WiFi réussie)
     $q1raw = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Power-Troubleshooter''] and EventID=1]]</Select></Query></QueryList>'
     $q2raw = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Kernel-Power''] and EventID=107]]</Select></Query></QueryList>'
     $q3raw = '<QueryList><Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"><Select Path="Microsoft-Windows-NetworkProfile/Operational">*[System[EventID=10000]]</Select></Query></QueryList>'
+    $q4raw = '<QueryList><Query Id="0" Path="Microsoft-Windows-WLAN-AutoConfig/Operational"><Select Path="Microsoft-Windows-WLAN-AutoConfig/Operational">*[System[EventID=8001]]</Select></Query></QueryList>'
 
     $q1 = [System.Security.SecurityElement]::Escape($q1raw)
     $q2 = [System.Security.SecurityElement]::Escape($q2raw)
     $q3 = [System.Security.SecurityElement]::Escape($q3raw)
+    $q4 = [System.Security.SecurityElement]::Escape($q4raw)
 
+    # >>> MODIF : triggers refondus. Ajout de ResumeTrigger, SessionStateChangeTrigger,
+    #            LogonTrigger, Repetition (filet de sécurité) et EventTrigger WLAN.
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>win-roll-lock : rolling password</Description></RegistrationInfo>
   <Triggers>
     <BootTrigger><Enabled>true</Enabled></BootTrigger>
-    <CalendarTrigger><StartBoundary>2026-01-01T00:00:01</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
+
+    <!-- AJOUT : reprise de veille / hibernation (le trigger qui manquait) -->
+    <ResumeTrigger><Enabled>true</Enabled><Delay>PT15S</Delay></ResumeTrigger>
+
+    <!-- AJOUT : déverrouillage de session (rafraîchit après Win+L) -->
+    <SessionStateChangeTrigger><Enabled>true</Enabled><StateChange>SessionUnlock</StateChange></SessionStateChangeTrigger>
+
+    <!-- AJOUT : à chaque ouverture de session -->
+    <LogonTrigger><Enabled>true</Enabled><Delay>PT30S</Delay></LogonTrigger>
+
+    <!-- MODIF : quotidien + répétition toutes les 15 min (filet de sécurité) -->
+    <CalendarTrigger>
+      <StartBoundary>2026-01-01T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+      <Repetition>
+        <Interval>PT15M</Interval>
+        <Duration>P1D</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </CalendarTrigger>
+
     <EventTrigger><Enabled>true</Enabled><Delay>PT5S</Delay><Subscription>$q1</Subscription></EventTrigger>
     <EventTrigger><Enabled>true</Enabled><Delay>PT5S</Delay><Subscription>$q2</Subscription></EventTrigger>
     <EventTrigger><Enabled>true</Enabled><Delay>PT10S</Delay><Subscription>$q3</Subscription></EventTrigger>
+
+    <!-- AJOUT : reconnexion WiFi fiable -->
+    <EventTrigger><Enabled>true</Enabled><Delay>PT5S</Delay><Subscription>$q4</Subscription></EventTrigger>
   </Triggers>
   <Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
   <Settings>

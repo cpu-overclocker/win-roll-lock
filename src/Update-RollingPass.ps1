@@ -30,8 +30,35 @@ try {
         } catch { Write-Log "last_known_time.txt illisible: $($_.Exception.Message)" 'WARN' }
     }
 
-    # Niveau 1 : reseau
-    $net    = Get-NetworkTimeUtc -NtpServers @($cfg.NtpServers)
+    # >>> AJOUT : cache réseau. Évite d'interroger NTP à chaque exécution (la
+    #             tâche se relance maintenant toutes les 15 min).
+    #             On ne re-tente NTP que si la dernière synchro réussie a plus
+    #             de 30 minutes. Sinon on utilise l'heure locale, qui est
+    #             déjà correcte puisque le dernier SYNC a réussi.
+    $lastSyncPath = Get-WRLPath 'last_sync.txt'
+    $skipNetwork  = $false
+    if (Test-Path $lastSyncPath) {
+        try {
+            $rawSync   = (Get-Content $lastSyncPath -Raw).Trim()
+            $lastSync  = [datetime]::Parse($rawSync, [System.Globalization.CultureInfo]::InvariantCulture,
+                                          [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+            $ageMin    = ((Get-Date).ToUniversalTime() - $lastSync).TotalMinutes
+            if ($ageMin -ge 0 -and $ageMin -lt 30) { $skipNetwork = $true }
+        } catch { Write-Log "last_sync.txt illisible: $($_.Exception.Message)" 'WARN' }
+    }
+
+    # Niveau 1 : reseau (avec cache)
+    $net = $null
+    if (-not $skipNetwork) {
+        $net = Get-NetworkTimeUtc -NtpServers @($cfg.NtpServers)
+        if ($net) {
+            # >>> AJOUT : mémorise la synchro réussie pour le cache
+            Set-Content -Path $lastSyncPath -Value (Get-Date).ToUniversalTime().ToString('o') -Encoding ASCII
+        }
+    } else {
+        Write-Log 'Sync réseau ignorée (cache récent < 30 min)'
+    }
+
     $sysUtc = (Get-Date).ToUniversalTime()
     $netUtc = $null
     if ($net) { $netUtc = $net.Utc }
