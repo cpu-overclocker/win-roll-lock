@@ -5,7 +5,7 @@
 **A Windows local password that rotates every day.**
 *No server, no AD, no hardware.*
 
-<sub>Default `ddMM` — e.g. `0410` on October 4th</sub>
+<sub>Format auto-detected from your locale — or picked manually at install</sub>
 
 ![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1-5391FE?logo=powershell&logoColor=white)
