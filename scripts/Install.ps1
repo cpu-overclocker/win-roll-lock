@@ -1,4 +1,4 @@
-# Install.ps1 : installs WinRollLock with anti-lockout safeguards
+# Install.ps1 : installs win-roll-lock with anti-lockout safeguards
 # Self-elevates to administrator BEFORE anything else.
 [CmdletBinding()]
 param(
@@ -6,7 +6,7 @@ param(
     [string]$Format = '',
     [string]$Prefix = '',
     [string]$MasterCode = '',
-    [string]$Root = 'C:\ProgramData\WinRollLock',
+    [string]$Root = 'C:\ProgramData\win-roll-lock',
     [switch]$NoPause
 )
 
@@ -134,7 +134,7 @@ if (Test-WindowsHelloEnabled) {
     Write-Host '============================================================' -ForegroundColor Yellow
     Write-Host ''
     Write-Host '  Windows Hello (PIN, fingerprint, face) is enabled on' -ForegroundColor White
-    Write-Host '  this machine. WinRollLock only changes the TRADITIONAL' -ForegroundColor White
+    Write-Host '  this machine. win-roll-lock only changes the TRADITIONAL' -ForegroundColor White
     Write-Host '  account password, NOT the Hello PIN.' -ForegroundColor White
     Write-Host ''
     Write-Host '  At the logon screen, choose the PASSWORD option' -ForegroundColor Gray
@@ -296,7 +296,7 @@ try {
 
                 try {
                     New-LocalUser -Name $newName -Password $pwd1 -PasswordNeverExpires `
-                                   -Description 'WinRollLock rolling account' | Out-Null
+                                   -Description 'win-roll-lock rolling account' | Out-Null
                     Write-Host "   Account '$newName' created." -ForegroundColor Green
                     Add-CreatedAccount -Name $newName
 
@@ -422,7 +422,7 @@ try {
 
             try {
                 New-LocalUser -Name $rn -Password $rp1 -PasswordNeverExpires `
-                               -Description 'WinRollLock recovery' | Out-Null
+                               -Description 'win-roll-lock recovery' | Out-Null
                 Add-LocalGroupMember -SID 'S-1-5-32-544' -Member $rn
                 Add-CreatedAccount -Name $rn
                 $rescue = Get-LocalUser -Name $rn
@@ -577,7 +577,7 @@ try {
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>WinRollLock : rolling password</Description></RegistrationInfo>
+  <RegistrationInfo><Description>win-roll-lock : rolling password</Description></RegistrationInfo>
   <Triggers>
     <BootTrigger><Enabled>true</Enabled></BootTrigger>
     <CalendarTrigger><StartBoundary>2026-01-01T00:00:01</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
@@ -598,7 +598,7 @@ try {
   <Actions Context="Author"><Exec><Command>$ps</Command><Arguments>-NoProfile -ExecutionPolicy Bypass -File "$scr"</Arguments></Exec></Actions>
 </Task>
 "@
-    Register-ScheduledTask -TaskName 'WinRollLock' -Xml $xml -Force | Out-Null
+    Register-ScheduledTask -TaskName 'win-roll-lock' -Xml $xml -Force | Out-Null
 
     # ------------------------------------------------------------
     # 9. First run

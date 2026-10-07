@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔐 WinRollLock
+# 🔐 win-roll-lock
 
 **A Windows local password that rotates every day.**
 *No server, no AD, no hardware.*
@@ -94,7 +94,7 @@ The MasterCode is **never** valid when the clock is fine. It's a safety net, not
 
 ## 🗂️ What gets created
 
-Everything lives in `C:\ProgramData\WinRollLock\` (admin-only):
+Everything lives in `C:\ProgramData\win-roll-lock\` (admin-only):
 
 | File | Purpose |
 |---|---|
@@ -103,7 +103,7 @@ Everything lives in `C:\ProgramData\WinRollLock\` (admin-only):
 | `log.txt` | Log |
 | `src\` | Scripts run by the scheduled task |
 
-Plus a **scheduled task** named `WinRollLock`, running under `SYSTEM`.
+Plus a **scheduled task** named `win-roll-lock`, running under `SYSTEM`.
 
 ---
 

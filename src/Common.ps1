@@ -1,7 +1,7 @@
 # Common.ps1 : fonctions partagees (log, etat, mot de passe, banniere)
 Set-StrictMode -Version 2.0
 
-$script:WRLRoot = 'C:\ProgramData\WinRollLock'
+$script:WRLRoot = 'C:\ProgramData\win-roll-lock'
 
 function Set-WRLRoot {
     param([Parameter(Mandatory)][string]$Path)
@@ -89,11 +89,11 @@ function Set-LogonBanner {
     param([string]$Text)
     $k = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
     if ($Text) {
-        Set-ItemProperty -Path $k -Name 'legalnoticecaption' -Value 'WinRollLock'
+        Set-ItemProperty -Path $k -Name 'legalnoticecaption' -Value 'win-roll-lock'
         Set-ItemProperty -Path $k -Name 'legalnoticetext' -Value $Text
     } else {
         $cap = try { Get-ItemPropertyValue -Path $k -Name 'legalnoticecaption' } catch { $null }
-        if ($cap -eq 'WinRollLock') {
+        if ($cap -eq 'win-roll-lock') {
             Remove-ItemProperty -Path $k -Name 'legalnoticecaption' -ErrorAction SilentlyContinue
             Remove-ItemProperty -Path $k -Name 'legalnoticetext' -ErrorAction SilentlyContinue
         }

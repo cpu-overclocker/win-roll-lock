@@ -1,8 +1,8 @@
-# Uninstall.ps1 : removes WinRollLock and restores a fixed password
+# Uninstall.ps1 : removes win-roll-lock and restores a fixed password
 # Self-elevates to administrator BEFORE anything else.
 [CmdletBinding()]
 param(
-    [string]$Root = 'C:\ProgramData\WinRollLock',
+    [string]$Root = 'C:\ProgramData\win-roll-lock',
     [switch]$KeepFiles,
     [switch]$NoPause
 )
@@ -102,7 +102,7 @@ try {
     # ------------------------------------------------------------
     Write-Host ''
     Write-Host '============================================================' -ForegroundColor Cyan
-    Write-Host '  UNINSTALL WinRollLock' -ForegroundColor Cyan
+    Write-Host '  UNINSTALL win-roll-lock' -ForegroundColor Cyan
     Write-Host '============================================================' -ForegroundColor Cyan
     Write-Host ''
     Write-Host '  This will :' -ForegroundColor White
@@ -120,7 +120,7 @@ try {
     # ------------------------------------------------------------
     # 2. Stop the task
     # ------------------------------------------------------------
-    Unregister-ScheduledTask -TaskName 'WinRollLock' -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'win-roll-lock' -Confirm:$false -ErrorAction SilentlyContinue
     Write-Host 'Scheduled task removed.'
 
     # ------------------------------------------------------------
@@ -164,7 +164,7 @@ try {
 
         if ($created.Count -gt 0) {
             Write-Host ''
-            Write-Host 'Accounts created by WinRollLock:' -ForegroundColor Cyan
+            Write-Host 'Accounts created by win-roll-lock:' -ForegroundColor Cyan
             foreach ($name in $created) {
                 $marker = if ($name -eq $cfg.User) { ' (rolling account)' } else { '' }
                 Write-Host "  - $name$marker"

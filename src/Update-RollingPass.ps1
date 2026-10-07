@@ -12,7 +12,7 @@ if (-not $Root) { $Root = Split-Path $PSScriptRoot -Parent }
 . (Join-Path $PSScriptRoot 'Time-Sync.ps1')
 Set-WRLRoot $Root
 
-$mutex = New-Object System.Threading.Mutex($false, 'Global\WinRollLock')
+$mutex = New-Object System.Threading.Mutex($false, 'Global\win-roll-lock')
 $have  = $false
 try {
     $have = $mutex.WaitOne(90000)
