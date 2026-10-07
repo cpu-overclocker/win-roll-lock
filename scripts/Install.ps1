@@ -108,9 +108,47 @@ function Get-DefaultDateFormat {
 }
 
 if ([string]::IsNullOrEmpty($Format)) {
-    $Format = Get-DefaultDateFormat
-    $culture = [System.Globalization.CultureInfo]::CurrentCulture
-    Write-Host "Detected culture: $($culture.Name)  ->  default format: $Format" -ForegroundColor DarkGray
+    $detected = Get-DefaultDateFormat
+    $culture  = [System.Globalization.CultureInfo]::CurrentCulture
+    $display  = if ($detected -eq 'ddMM') { 'dd/MM' } else { 'MM/dd' }
+
+    Write-Host ''
+    Write-Host "Detected culture: $($culture.Name)" -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host '  TIMESTAMP FORMAT' -ForegroundColor Cyan
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host "  The OS timestamp format on this machine is : $display" -ForegroundColor White
+    Write-Host ''
+    Write-Host '  This format is used to build the daily rolling password.' -ForegroundColor Gray
+    Write-Host '  (e.g. MM/dd -> password "0415" on April 15th)' -ForegroundColor DarkGray
+    Write-Host ''
+
+    $ans = Read-Host "Use the OS format ($display)? (Y/N)"
+    if ($ans -match '^(y|yes|o|oui)$') {
+        $Format = $detected
+    } else {
+        do {
+            Write-Host ''
+            Write-Host 'Choose the timestamp format:' -ForegroundColor White
+            Write-Host ''
+            Write-Host '  [1] MM/dd   (month first - US style)'   -ForegroundColor Gray
+            Write-Host '  [2] dd/MM   (day first  - EU style)'   -ForegroundColor Gray
+            Write-Host ''
+            $fmtChoice = (Read-Host 'Select (1 or 2)').Trim()
+            if ($fmtChoice -eq '1') {
+                $Format = 'MMdd'
+            } elseif ($fmtChoice -eq '2') {
+                $Format = 'ddMM'
+            } else {
+                Write-Host 'Invalid choice. Try again.' -ForegroundColor Red
+            }
+        } while ([string]::IsNullOrEmpty($Format))
+    }
+
+    Write-Host ''
+    Write-Host "Selected format: $Format" -ForegroundColor Green
 }
 
 # --- Windows Hello detection (real check, no false positives) ---
