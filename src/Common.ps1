@@ -21,7 +21,7 @@ function Write-Log {
             Move-Item $p "$p.old" -Force
         }
         $line = '{0:yyyy-MM-dd HH:mm:ss} [{1}] {2}' -f (Get-Date), $Level, $Message
-        Add-Content -Path $p -Value $line
+        Add-Content -Path $p -Value $line -Encoding UTF8
     } catch { }
     Write-Verbose $Message
 }

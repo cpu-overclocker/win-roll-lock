@@ -72,7 +72,22 @@ if (-not $isAdmin) {
 # 2. ADMIN — from here we are elevated
 # ============================================================
 $ErrorActionPreference = 'Stop'
-$repo = Split-Path $PSScriptRoot -Parent
+
+# Détecte la racine du dépôt quel que soit l'emplacement du script :
+#  - Setup\Install.ps1   → parent = racine du repo
+#  - Install.ps1 (racine) → $PSScriptRoot = racine du repo
+$repoCandidates = @(
+    (Split-Path $PSScriptRoot -Parent),
+    $PSScriptRoot
+)
+$repo = $repoCandidates | Where-Object {
+    $_ -and (Test-Path (Join-Path $_ 'src\Common.ps1'))
+} | Select-Object -First 1
+
+if (-not $repo) {
+    throw "Cannot locate 'src\Common.ps1'. Check the repository structure (expected: <repo>\src\Common.ps1)."
+}
+
 . (Join-Path $repo 'src\Common.ps1')
 . (Join-Path $repo 'src\Security-Policy.ps1')
 . (Join-Path $repo 'src\Time-Sync.ps1')

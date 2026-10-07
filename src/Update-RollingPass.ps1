@@ -30,11 +30,8 @@ try {
         } catch { Write-Log "last_known_time.txt illisible: $($_.Exception.Message)" 'WARN' }
     }
 
-    # >>> AJOUT : cache réseau. Évite d'interroger NTP à chaque exécution (la
-    #             tâche se relance maintenant toutes les 15 min).
-    #             On ne re-tente NTP que si la dernière synchro réussie a plus
-    #             de 30 minutes. Sinon on utilise l'heure locale, qui est
-    #             déjà correcte puisque le dernier SYNC a réussi.
+    # Cache reseau : evite d'interroger NTP a chaque execution.
+    # On ne re-tente NTP que si la derniere synchro reussie a plus de 30 min.
     $lastSyncPath = Get-WRLPath 'last_sync.txt'
     $skipNetwork  = $false
     if (Test-Path $lastSyncPath) {
@@ -52,11 +49,10 @@ try {
     if (-not $skipNetwork) {
         $net = Get-NetworkTimeUtc -NtpServers @($cfg.NtpServers)
         if ($net) {
-            # >>> AJOUT : mémorise la synchro réussie pour le cache
             Set-Content -Path $lastSyncPath -Value (Get-Date).ToUniversalTime().ToString('o') -Encoding ASCII
         }
     } else {
-        Write-Log 'Sync réseau ignorée (cache récent < 30 min)'
+        Write-Log 'Sync reseau ignoree (cache recent < 30 min)'
     }
 
     $sysUtc = (Get-Date).ToUniversalTime()
@@ -65,6 +61,18 @@ try {
 
     # Niveaux 2 et 3 : decision
     $d = Resolve-TimeDecision -NetworkUtc $netUtc -SystemUtc $sysUtc -LastKnownUtc $lastKnown -MinYear ([int]$cfg.MinYear)
+
+    # >>> AJOUT : si on a saute le reseau a cause du cache et que l'horloge
+    #             locale est coherente, on est dans un etat "CACHED".
+    #             Cela evite d'afficher la banniere "Offline" alors qu'on
+    #             est en fait en ligne (fausse alerte UX).
+    if ($skipNetwork -and $d.Mode -eq 'OFFLINE_OK') {
+        $d = [pscustomobject]@{
+            Mode   = 'CACHED'
+            Utc    = $d.Utc
+            Reason = 'Cache reseau recent (<30 min)'
+        }
+    }
 
     # Mise a l'heure Windows si ecart important et heure reseau fiable
     if ($d.Mode -eq 'SYNC' -and ([math]::Abs(($sysUtc - $netUtc).TotalSeconds) -gt 120) -and -not $DryRun) {
@@ -82,17 +90,23 @@ try {
         $target   = Get-RollingPassword -LocalDate $localNow -Format ([string]$cfg.Format) -Prefix ([string]$cfg.Prefix)
     }
 
-    # Banniere (Niveau 4)
+    # Banniere (Niveau 4) : aucune banniere en mode SYNC ou CACHED.
     $banner = $null
     if ([bool]$cfg.Banner) {
         switch ($d.Mode) {
             'FALLBACK'   { $banner = 'CMOS error: fallback mode active.' }
             'OFFLINE_OK' { $banner = 'Offline: date not verified by the network.' }
-            default      { $banner = $null }
+            default      { $banner = $null }   # SYNC, CACHED
         }
     }
     if ($DryRun) {
-        [pscustomobject]@{ Mode = $d.Mode; Reason = $d.Reason; Source = $(if ($net) { $net.Source } else { 'aucune' }); PasswordCible = $target; Banniere = $banner }
+        [pscustomobject]@{
+            Mode          = $d.Mode
+            Reason        = $d.Reason
+            Source        = $(if ($net) { $net.Source } elseif ($skipNetwork) { 'cache' } else { 'aucune' })
+            PasswordCible = $target
+            Banniere      = $banner
+        }
         return
     }
 
