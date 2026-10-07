@@ -1,3 +1,58 @@
+<div align="center">
+
+# 🔐 win-roll-lock
+
+**A Windows local password that rotates every day.**
+*No server, no AD, no hardware.*
+
+<sub>Default `ddMM` — e.g. `0410` on October 4th</sub>
+
+![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
+![PowerShell](https://img.shields.io/badge/PowerShell-5.1-5391FE?logo=powershell&logoColor=white)
+![Status](https://img.shields.io/badge/status-beta-orange)
+
+</div>
+
+---
+
+## ✨ What it does
+
+Your Windows password **changes every day**, automatically. No server, no AD, no hardware — just a scheduled task.
+
+| | |
+|---|---|
+| 🔄 | Password rotates daily |
+| 🌐 | Pulls the time from the network (NTP / HTTP) |
+| 🛡️ | Never trusts a doubtful BIOS clock |
+| 🔑 | MasterCode as an emergency fallback |
+| 🔐 | Encrypted state (machine DPAPI) |
+| 📶 | Works offline — network is used to *verify*, not to *compute* |
+
+**The format is auto-detected from your country.** It's always **day + month** or **month + day**, in that order, using two digits each:
+
+| Your region | Format used | Example on October 4th |
+|---|---|---|
+| Most countries (FR, UK, DE, …) | `ddMM` (day + month) | `0410` |
+| United States | `MMdd` (month + day) | `1004` |
+
+No configuration needed — the script picks the right one for you on install.
+
+---
+
+## 📁 Repository layout
+
+```
+win-roll-lock/
+├── README.md
+├── Setup/
+│   ├── Install.ps1        ← double-click this to install
+│   └── Uninstall.ps1      ← double-click this to uninstall
+└── src/
+    ├── Common.ps1
+    ├── Security-Policy.ps1
+    ├── Time-Sync.ps1
+    └── Update-RollingPass.ps1   ← runs from the scheduled task
+```
 
 The `Setup\` scripts auto-locate the `src\` folder, so you can also move them next to `src\` if you prefer a flat layout.
 
@@ -62,7 +117,7 @@ The MasterCode is **never** valid when the clock is fine. It's a safety net, not
 
 ## 🔁 Reliability — when does the password actually refresh?
 
-The scheduled task fires on **8 different triggers**, so the daily code is always up to date when you need it:
+The scheduled task fires on **9 different triggers**, so the daily code is always up to date when you need it:
 
 | Trigger | What it catches |
 |---|---|
