@@ -94,8 +94,8 @@ if (-not $repo) {
 
 Set-WRLRoot $Root
 
-# Detects the local date convention to pick the right rolling format.
-# Returns 'ddMM' for day-first cultures (most of the world), 'MMdd' for month-first (US).
+# Detecte la convention de date locale pour proposer le bon format de rolling.
+# Retourne 'ddMM' (jour d'abord, majorite du monde) ou 'MMdd' (mois d'abord, US).
 function Get-DefaultDateFormat {
     try {
         $culture = [System.Globalization.CultureInfo]::CurrentCulture
@@ -116,50 +116,6 @@ function Get-DefaultDateFormat {
     } catch {
         return 'ddMM'
     }
-}
-
-if ([string]::IsNullOrEmpty($Format)) {
-    $detected = Get-DefaultDateFormat
-    $culture  = [System.Globalization.CultureInfo]::CurrentCulture
-    $display  = if ($detected -eq 'ddMM') { 'dd/MM' } else { 'MM/dd' }
-
-    Write-Host ''
-    Write-Host "Detected culture: $($culture.Name)" -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '============================================================' -ForegroundColor Cyan
-    Write-Host '  TIMESTAMP FORMAT' -ForegroundColor Cyan
-    Write-Host '============================================================' -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host "  The OS timestamp format on this machine is : $display" -ForegroundColor White
-    Write-Host ''
-    Write-Host '  This format is used to build the daily rolling password.' -ForegroundColor Gray
-    Write-Host '  (e.g. MM/dd -> password "0415" on April 15th)' -ForegroundColor DarkGray
-    Write-Host ''
-
-    $ans = Read-Host "Use the OS format ($display)? (Y/N)"
-    if ($ans -match '^(y|yes|o|oui)$') {
-        $Format = $detected
-    } else {
-        do {
-            Write-Host ''
-            Write-Host 'Choose the timestamp format:' -ForegroundColor White
-            Write-Host ''
-            Write-Host '  [1] MM/dd   (month first - US style)'   -ForegroundColor Gray
-            Write-Host '  [2] dd/MM   (day first  - EU style)'   -ForegroundColor Gray
-            Write-Host ''
-            $fmtChoice = (Read-Host 'Select (1 or 2)').Trim()
-            if ($fmtChoice -eq '1') {
-                $Format = 'MMdd'
-            } elseif ($fmtChoice -eq '2') {
-                $Format = 'ddMM'
-            } else {
-                Write-Host 'Invalid choice. Try again.' -ForegroundColor Red
-            }
-        } while ([string]::IsNullOrEmpty($Format))
-    }
-
-    Write-Host ''
-    Write-Host "Selected format: $Format" -ForegroundColor Green
 }
 
 # --- Windows Hello detection (real check, no false positives) ---
@@ -194,7 +150,10 @@ if (Test-WindowsHelloEnabled) {
 }
 
 if ([string]::IsNullOrEmpty($MasterCode)) {
-    $sample = Get-RollingPassword -LocalDate (Get-Date) -Format $Format
+    # Preview avec le format detecte — le format sera confirme plus tard,
+    # juste avant la dry run.
+    $previewFmt = if ($Format) { $Format } else { Get-DefaultDateFormat }
+    $sample = Get-RollingPassword -LocalDate (Get-Date) -Format $previewFmt
     Write-Host ''
     Write-Host '============================================================' -ForegroundColor Cyan
     Write-Host '  MASTER CODE' -ForegroundColor Cyan
@@ -252,6 +211,7 @@ try {
     $currentUser = $env:USERNAME
 
     if (-not $isExplicitUser) {
+        Write-Host ''
         Write-Host '1/9 Selecting target account' -ForegroundColor Cyan
 
         while ($true) {
@@ -359,6 +319,7 @@ try {
             break
         }
     } else {
+        Write-Host ''
         Write-Host '1/9 Verifying target account' -ForegroundColor Cyan
     }
 
@@ -376,6 +337,7 @@ try {
     # ------------------------------------------------------------
     # 2. Recovery administrator
     # ------------------------------------------------------------
+    Write-Host ''
     Write-Host '2/9 Selecting recovery administrator' -ForegroundColor Cyan
 
     $builtin = @('Administrateur','Administrator','DefaultAccount','Invité','Guest','WDAGUtilityAccount')
@@ -411,7 +373,7 @@ try {
         }
 
         do {
-            $choice = Read-Host 'Select account number (0 to cancel)'
+            $choice = Read-Host 'Select account number'
             $idx = -1
             $valid = [int]::TryParse($choice, [ref]$idx) -and $idx -ge 0 -and $idx -le $adminCandidates.Count
             if (-not $valid) { Write-Host 'Invalid choice. Try again.' -ForegroundColor Red }
@@ -471,35 +433,94 @@ try {
             }
         }
 
-        $rn = $adminCandidates[$idx - 1].Name
-        Write-Host ''
-        Write-Host "Confirm FIXED password for '$rn' (used as recovery)." -ForegroundColor Cyan
-        do {
-            $rp1 = Read-Host 'Password' -AsSecureString
-            $rp2 = Read-Host 'Confirm password' -AsSecureString
-            $plain1 = ConvertTo-Plain $rp1
-            $plain2 = ConvertTo-Plain $rp2
-            if ($plain1 -ne $plain2) {
-                Write-Host 'Passwords do not match. Try again.' -ForegroundColor Red
-                continue
-            }
-            if ([string]::IsNullOrEmpty($plain1)) {
-                Write-Host 'Password cannot be empty for a recovery account.' -ForegroundColor Red
-                continue
-            }
-            break
-        } while ($true)
+        $rn     = $adminCandidates[$idx - 1].Name
+        $luRec  = Get-LocalUser -Name $rn -ErrorAction SilentlyContinue
+        $hasPwd = $luRec -and $luRec.PasswordRequired
 
-        try {
-            Set-LocalUser -Name $rn -Password $rp1 -PasswordNeverExpires $true
-            $rescue = Get-LocalUser -Name $rn
-            Write-Host "   Password set for '$rn'." -ForegroundColor Green
-            break
-        } catch {
-            Write-Host "Failed to set password: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host 'Back to recovery account selection.' -ForegroundColor Yellow
-            continue
+        Write-Host ''
+        Write-Host "Recovery account: '$rn'" -ForegroundColor Cyan
+        Write-Host 'This account is your backstop if the rolling account gets locked.' -ForegroundColor White
+        Write-Host ''
+        if (-not $hasPwd) {
+            Write-Host '  This account currently has NO password.' -ForegroundColor Yellow
+            Write-Host ''
         }
+
+        $recoveryDone = $false
+        while (-not $recoveryDone) {
+            Write-Host 'Choose how to set its password:' -ForegroundColor White
+            Write-Host ''
+            if ($hasPwd) {
+                Write-Host '  [1] Enter the CURRENT password (verify it)' -ForegroundColor Green
+            }
+            Write-Host '  [2] Set a NEW password' -ForegroundColor Green
+            Write-Host '  [0] Back to account selection' -ForegroundColor Gray
+            Write-Host ''
+
+            $sub = (Read-Host 'Select').Trim()
+
+            if ($sub -eq '0') {
+                $rn = $null
+                break
+            }
+
+            if ($sub -eq '1' -and $hasPwd) {
+                $verified = $false
+                for ($try = 1; $try -le 3; $try++) {
+                    $sec   = Read-Host "Current password for '$rn' (attempt $try/3)" -AsSecureString
+                    $plain = ConvertTo-Plain $sec
+                    if ([string]::IsNullOrEmpty($plain)) { continue }
+                    if (Test-LocalCredential -User $rn -Password $plain) {
+                        $verified = $true
+                        break
+                    }
+                    Write-Host '   Invalid password.' -ForegroundColor Red
+                }
+                if (-not $verified) {
+                    Write-Host '   Too many failed attempts. Back to menu.' -ForegroundColor Red
+                    continue
+                }
+                try {
+                    Set-LocalUser -Name $rn -PasswordNeverExpires $true
+                    $rescue = Get-LocalUser -Name $rn
+                    Write-Host "   Current password verified for '$rn' (expiration disabled)." -ForegroundColor Green
+                    $recoveryDone = $true
+                } catch {
+                    Write-Host "   Failed: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+            elseif ($sub -eq '2') {
+                do {
+                    $sec1 = Read-Host "NEW FIXED password for '$rn'" -AsSecureString
+                    $sec2 = Read-Host 'Confirm password' -AsSecureString
+                    $p1   = ConvertTo-Plain $sec1
+                    $p2   = ConvertTo-Plain $sec2
+                    if ($p1 -ne $p2) {
+                        Write-Host '   Passwords do not match. Try again.' -ForegroundColor Red
+                        continue
+                    }
+                    if ([string]::IsNullOrEmpty($p1)) {
+                        Write-Host '   Password cannot be empty.' -ForegroundColor Red
+                        continue
+                    }
+                    break
+                } while ($true)
+                try {
+                    Set-LocalUser -Name $rn -Password $sec1 -PasswordNeverExpires $true
+                    $rescue = Get-LocalUser -Name $rn
+                    Write-Host "   New password set for '$rn'." -ForegroundColor Green
+                    $recoveryDone = $true
+                } catch {
+                    Write-Host "   Failed: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+            else {
+                Write-Host '   Invalid choice.' -ForegroundColor Red
+            }
+        }
+
+        if ($null -eq $rn) { continue }   # 0 → retour à la sélection du compte recovery
+        if ($recoveryDone) { break }      # OK → on sort de la boucle while externe
     }
 
     Write-Host "   Recovery account: $($rescue.Name)"
@@ -507,6 +528,7 @@ try {
     # ------------------------------------------------------------
     # 3. BitLocker
     # ------------------------------------------------------------
+    Write-Host ''
     Write-Host '3/9 Verifying BitLocker' -ForegroundColor Cyan
     $blActive = $false
     try {
@@ -525,36 +547,120 @@ try {
     # ------------------------------------------------------------
     # 4. Current password
     # ------------------------------------------------------------
+    Write-Host ''
     Write-Host '4/9 Current account password' -ForegroundColor Cyan
     $cur = ConvertTo-Plain (Read-Host "Current password for $User (empty if none)" -AsSecureString)
     if ($cur -ne '' -and -not (Test-LocalCredential -User $User -Password $cur)) { throw 'Current password is incorrect.' }
 
     # ------------------------------------------------------------
-    # 5. Copy files and config
+    # 5. Copy files (config.json is written in step 6 once format is chosen)
     # ------------------------------------------------------------
-    Write-Host '5/9 Copying files and config' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '5/9 Copying files' -ForegroundColor Cyan
     New-Item -ItemType Directory -Path "$Root\src" -Force | Out-Null
     Copy-Item (Join-Path $repo 'src\*') "$Root\src" -Recurse -Force
-    $cfg = [ordered]@{
-        User = $User; Format = $Format; Prefix = $Prefix; MasterCode = $MasterCode
-        MinYear = (Get-Date).Year
-        NtpServers = @('pool.ntp.org', 'time.cloudflare.com', 'time.windows.com')
-        Banner = $true
-    }
-    $cfg | ConvertTo-Json | Set-Content (Join-Path $Root 'config.json') -Encoding UTF8
-    & icacls $Root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
 
     # ------------------------------------------------------------
-    # 6. Dry run
+    # 6. Timestamp format + dry run
     # ------------------------------------------------------------
-    Write-Host '6/9 Dry run (nothing is modified)' -ForegroundColor Cyan
-    $dry = & (Join-Path $Root 'src\Update-RollingPass.ps1') -DryRun -Root $Root
-    $dry | Format-List
-    $ans = Read-Host 'Is the target password correct? (Y/N)'
-    if ($ans -notmatch '^(y|yes|o|oui)$') {
+    Write-Host ''
+    Write-Host '6/9 Timestamp format and dry run (nothing is modified)' -ForegroundColor Cyan
+
+    $detected       = Get-DefaultDateFormat
+    $culture        = [System.Globalization.CultureInfo]::CurrentCulture
+    $display        = if ($detected -eq 'ddMM') { 'dd/MM' } else { 'MM/dd' }
+    $formatExplicit = $PSBoundParameters.ContainsKey('Format') -and $Format
+
+    $confirmed = $false
+    $fromBack  = $false
+    do {
+        if (-not $formatExplicit -and [string]::IsNullOrEmpty($Format)) {
+            if (-not $fromBack) {
+                Write-Host ''
+                Write-Host "Detected culture: $($culture.Name)" -ForegroundColor DarkGray
+                Write-Host ''
+                Write-Host '============================================================' -ForegroundColor Cyan
+                Write-Host '  TIMESTAMP FORMAT' -ForegroundColor Cyan
+                Write-Host '============================================================' -ForegroundColor Cyan
+                Write-Host ''
+                Write-Host "  The OS timestamp format on this machine is : $display" -ForegroundColor White
+                Write-Host ''
+                Write-Host '  This format is used to build the daily rolling password.' -ForegroundColor Gray
+                Write-Host ''
+                Write-Host '  Today would give:' -ForegroundColor White
+                Write-Host ("    dd/MM (day first)   ->  {0}" -f (Get-RollingPassword -LocalDate (Get-Date) -Format 'ddMM')) -ForegroundColor Gray
+                Write-Host ("    MM/dd (month first) ->  {0}" -f (Get-RollingPassword -LocalDate (Get-Date) -Format 'MMdd')) -ForegroundColor Gray
+                Write-Host ''
+
+                $ans = Read-Host "Use the OS format ($display)? (Y/N)"
+                if ($ans -match '^(y|yes|o|oui)$') {
+                    $Format = $detected
+                }
+            } else {
+                Write-Host ''
+                Write-Host '============================================================' -ForegroundColor Cyan
+                Write-Host '  TIMESTAMP FORMAT' -ForegroundColor Cyan
+                Write-Host '============================================================' -ForegroundColor Cyan
+            }
+
+            if ([string]::IsNullOrEmpty($Format)) {
+                do {
+                    Write-Host ''
+                    Write-Host 'Choose the timestamp format:' -ForegroundColor White
+                    Write-Host ''
+                    Write-Host '  [1] MM/dd   (month first - US style)' -ForegroundColor Gray
+                    Write-Host '  [2] dd/MM   (day first  - EU style)' -ForegroundColor Gray
+                    Write-Host ''
+                    $fmtChoice = (Read-Host 'Select (1 or 2)').Trim()
+                    if ($fmtChoice -eq '1') {
+                        $Format = 'MMdd'
+                    } elseif ($fmtChoice -eq '2') {
+                        $Format = 'ddMM'
+                    } else {
+                        Write-Host 'Invalid choice. Try again.' -ForegroundColor Red
+                    }
+                } while ([string]::IsNullOrEmpty($Format))
+            }
+
+            $fromBack = $false
+            Write-Host ''
+            Write-Host "Selected format: $Format" -ForegroundColor Green
+        }
+
+        # Write config.json with the chosen format
+        $cfg = [ordered]@{
+            User = $User; Format = $Format; Prefix = $Prefix; MasterCode = $MasterCode
+            MinYear = (Get-Date).Year
+            NtpServers = @('pool.ntp.org', 'time.cloudflare.com', 'time.windows.com')
+            Banner = $true
+        }
+        $cfg | ConvertTo-Json | Set-Content (Join-Path $Root 'config.json') -Encoding UTF8
+
+        # Dry run: show what the target password would be today
+        Write-Host ''
+        Write-Host 'Preview (nothing has been modified yet):' -ForegroundColor White
+        Write-Host ''
+        $dry = & (Join-Path $Root 'src\Update-RollingPass.ps1') -DryRun -Root $Root
+        $dry | Format-List
+
+        $ans = Read-Host 'Is the target password correct? (Y/N / B=back)'
+        if ($ans -match '^(y|yes|o|oui)$') {
+            $confirmed = $true
+            break
+        }
+        if ($ans -match '^(b|back)$' -and -not $formatExplicit) {
+            $Format   = ''
+            $fromBack = $true
+            continue
+        }
+        break
+    } while ($true)
+
+    if (-not $confirmed) {
         Write-Host ''
         Write-Host 'Installation cancelled.' -ForegroundColor Yellow
 
+        # Delete accounts created during this install
         $createdPath = Join-Path $Root 'created_accounts.json'
         if (Test-Path $createdPath) {
             try { $created = @(Get-Content $createdPath -Raw | ConvertFrom-Json) } catch { $created = @() }
@@ -573,6 +679,7 @@ try {
             }
         }
 
+        # Delete the install folder (config.json, src, state, etc.)
         if (Test-Path $Root) {
             Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
             Write-Host "  Folder $Root removed." -ForegroundColor Green
@@ -581,9 +688,13 @@ try {
         Wait-BeforeExit 1
     }
 
+    # Restrict permissions on the install folder
+    & icacls $Root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+
     # ------------------------------------------------------------
     # 7. Security policy
     # ------------------------------------------------------------
+    Write-Host ''
     Write-Host '7/9 Local security policy' -ForegroundColor Cyan
     $orig = Get-SecPolicyValues
     $orig | ConvertTo-Json | Set-Content (Join-Path $Root 'policy_original.json') -Encoding UTF8
@@ -592,13 +703,13 @@ try {
     # ------------------------------------------------------------
     # 8. Initial state + scheduled task
     # ------------------------------------------------------------
+    Write-Host ''
     Write-Host '8/9 Initial state and scheduled task' -ForegroundColor Cyan
     Save-State @{ User = $User; Password = $cur; Mode = 'INIT'; Updated = (Get-Date).ToString('o') }
 
     $ps  = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $scr = Join-Path $Root 'src\Update-RollingPass.ps1'
 
-    # >>> MODIF : ajout de la requête WLAN-AutoConfig/8001 (connexion WiFi réussie)
     $q1raw = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Power-Troubleshooter''] and EventID=1]]</Select></Query></QueryList>'
     $q2raw = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Kernel-Power''] and EventID=107]]</Select></Query></QueryList>'
     $q3raw = '<QueryList><Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"><Select Path="Microsoft-Windows-NetworkProfile/Operational">*[System[EventID=10000]]</Select></Query></QueryList>'
@@ -609,8 +720,6 @@ try {
     $q3 = [System.Security.SecurityElement]::Escape($q3raw)
     $q4 = [System.Security.SecurityElement]::Escape($q4raw)
 
-    # >>> MODIF : triggers refondus. Ajout de ResumeTrigger, SessionStateChangeTrigger,
-    #            LogonTrigger, Repetition (filet de sécurité) et EventTrigger WLAN.
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -618,16 +727,10 @@ try {
   <Triggers>
     <BootTrigger><Enabled>true</Enabled></BootTrigger>
 
-    <!-- AJOUT : reprise de veille / hibernation (le trigger qui manquait) -->
-    <ResumeTrigger><Enabled>true</Enabled><Delay>PT15S</Delay></ResumeTrigger>
-
-    <!-- AJOUT : déverrouillage de session (rafraîchit après Win+L) -->
     <SessionStateChangeTrigger><Enabled>true</Enabled><StateChange>SessionUnlock</StateChange></SessionStateChangeTrigger>
 
-    <!-- AJOUT : à chaque ouverture de session -->
     <LogonTrigger><Enabled>true</Enabled><Delay>PT30S</Delay></LogonTrigger>
 
-    <!-- MODIF : quotidien + répétition toutes les 15 min (filet de sécurité) -->
     <CalendarTrigger>
       <StartBoundary>2026-01-01T00:00:00</StartBoundary>
       <Enabled>true</Enabled>
@@ -642,8 +745,6 @@ try {
     <EventTrigger><Enabled>true</Enabled><Delay>PT5S</Delay><Subscription>$q1</Subscription></EventTrigger>
     <EventTrigger><Enabled>true</Enabled><Delay>PT5S</Delay><Subscription>$q2</Subscription></EventTrigger>
     <EventTrigger><Enabled>true</Enabled><Delay>PT10S</Delay><Subscription>$q3</Subscription></EventTrigger>
-
-    <!-- AJOUT : reconnexion WiFi fiable -->
     <EventTrigger><Enabled>true</Enabled><Delay>PT5S</Delay><Subscription>$q4</Subscription></EventTrigger>
   </Triggers>
   <Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
@@ -664,6 +765,7 @@ try {
     # ------------------------------------------------------------
     # 9. First run
     # ------------------------------------------------------------
+    Write-Host ''
     Write-Host '9/9 First run' -ForegroundColor Cyan
     & $ps -NoProfile -ExecutionPolicy Bypass -File $scr
     Get-Content (Join-Path $Root 'log.txt') -Tail 5
